@@ -14,7 +14,9 @@ const title = /<title>([\s\S]*?)<\/title>/.exec(html)?.[1] ?? 'Planificación In
 const description = /<meta name="description" content="([^"]*)"/.exec(html)?.[1];
 const fontLinks = [...html.matchAll(/<link rel="stylesheet" href="https:\/\/fonts\.googleapis\.com[^>]*>/g)].map((m) => m[0]);
 const styles = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
-const scripts = [...html.matchAll(/<script type="module"[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+// Las bibliotecas contienen el carácter U+FFFD literal dentro de cadenas (decodificador UTF-8, rangos XML).
+// Se sustituye por su secuencia de escape \uFFFD, equivalente en JavaScript, para que el HTML sea texto limpio.
+const scripts = [...html.matchAll(/<script type="module"[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1].replace(/\uFFFD/g, '\\uFFFD'));
 if (!scripts.length) throw new Error('No se ha encontrado el script de la aplicación en dist-artifact/index.html');
 for (const s of scripts) {
   // Evitar que un "</script" dentro del código cierre la etiqueta antes de tiempo
