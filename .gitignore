@@ -1,0 +1,19 @@
+node_modules/
+dist/
+dist-artifact/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+coverage/
+e2e/output/
+
+# Protección de datos industriales: no se versionan Excel/CSV reales.
+# Solo se permiten los ficheros ficticios de /samples generados por scripts/generate-samples.ts
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+!samples/*.xlsx
+!samples/*.csv

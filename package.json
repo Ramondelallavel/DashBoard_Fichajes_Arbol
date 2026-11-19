@@ -1,0 +1,45 @@
+{
+  "name": "planificacion-industrial-gantt",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Aplicación industrial de planificación: importación de Excel de producción y Ortems, árbol de procesos, Gantt, comparación y detección de cuellos de botella.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:artifact": "tsc -b && vite build --mode artifact && node scripts/build-artifact.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "samples": "tsx scripts/generate-samples.ts",
+    "e2e": "node e2e/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "date-fns": "4.1.0",
+    "exceljs": "4.4.0",
+    "papaparse": "5.5.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zustand": "5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "@types/papaparse": "5.3.16",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.1.0",
+    "fake-indexeddb": "6.2.4",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vite-plugin-singlefile": "2.3.0",
+    "vitest": "4.1.12",
+    "tsx": "4.20.6"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  }
+}
