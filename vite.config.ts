@@ -9,6 +9,11 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 export default defineConfig(({ mode }) => ({
   base: './',
   plugins: [react(), ...(mode === 'artifact' ? [viteSingleFile({ removeViteModuleLoader: true })] : [])],
+  // En desarrollo, la API del servidor (npm run dev:server) se sirve en el puerto 3000
+  server: { proxy: { '/api': 'http://localhost:3000' } },
+  // La vista previa de la build no usa el proxy: sin servidor, la aplicación funciona en modo local
+  preview: { proxy: {} },
+  worker: { format: 'es' },
   build: {
     outDir: mode === 'artifact' ? 'dist-artifact' : 'dist',
     chunkSizeWarningLimit: 2500,

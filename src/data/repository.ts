@@ -2,6 +2,7 @@ import { mergeSettings, type Settings } from '../domain/settings';
 import type { AlertReview, DatasetVersion, ImportBatch, ManualRelation, MappingProfile, RawSheet, SourceKind } from '../domain/types';
 import type { FilterState } from '../engine/filters';
 import type { PreparedImport } from '../import/pipeline';
+import type { Backend } from './backend';
 import type { KV } from './storage';
 
 export interface VersionMeta {
@@ -38,9 +39,13 @@ export interface PersistedState {
   savedFilters: SavedFilter[];
 }
 
-/** Repositorio: única puerta de acceso a datos persistidos (separado de la interfaz y del cálculo). */
-export class Repository {
+/** Repositorio local (IndexedDB o memoria): un usuario, sin servidor. Implementa la interfaz Backend. */
+export class Repository implements Backend {
+  mode = 'local' as const;
   constructor(public kv: KV) {}
+  get storageMode() {
+    return this.kv.mode;
+  }
 
   async load(): Promise<PersistedState> {
     const [batches, versions, profiles, reviewsList, manual, savedFilters] = await Promise.all([
@@ -80,7 +85,8 @@ export class Repository {
   }
 
   /** Confirma una importación: guarda lote, datos originales y nueva versión; actualiza el historial. */
-  async commitImport(prep: PreparedImport, keepVersions: number): Promise<void> {
+  async commitImport(prep: PreparedImport, keepVersions: number, basedOnVersion?: number | null): Promise<void> {
+    void basedOnVersion; // en modo local no hay otros usuarios: no hay conflictos de versión
     const { batch, dataset, result } = prep;
     const versions = (await this.kv.get<VersionMeta[]>('meta', 'versions')) ?? [];
     const pointers = (await this.kv.get<ActivePointers>('meta', 'active')) ?? {};
@@ -116,9 +122,11 @@ export class Repository {
   }
   async saveReview(r: AlertReview) {
     await this.kv.set('reviews', r.alertId, r);
+    return r;
   }
   async saveManual(m: ManualRelation) {
     await this.kv.set('manual', m.id, m);
+    return m;
   }
   async deleteManual(id: string) {
     await this.kv.del('manual', id);

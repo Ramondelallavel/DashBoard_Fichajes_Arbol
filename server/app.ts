@@ -128,6 +128,13 @@ export function buildApp(cfg: AppConfig): { app: FastifyInstance; db: Db; bootst
       if (req.headers['x-requested-with'] !== CLIENT_HEADER) return reply.code(403).send({ error: 'Petición no permitida.' });
     }
     if (req.url === '/api/health' || req.url === '/api/auth/login' || req.url === '/api/auth/logout') return;
+    if (req.url === '/api/auth/session') {
+      // Consultar la sesión no es un error aunque no haya sesión: se responde { user: null }
+      const t = parseCookies(req.headers.cookie)[COOKIE];
+      req.user = sessionUser(db, t, cfg.sessionHours) ?? null;
+      req.sessionToken = t;
+      return;
+    }
     const token = parseCookies(req.headers.cookie)[COOKIE];
     const user = sessionUser(db, token, cfg.sessionHours);
     if (!user) return reply.code(401).send({ error: 'Sesión no iniciada o caducada.' });

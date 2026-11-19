@@ -45,6 +45,7 @@ describe('Servidor: autenticación y seguridad', () => {
   it('crea el administrador inicial desde variables de entorno y exige sesión en la API', async () => {
     expect((await app.inject({ url: '/api/health' })).json()).toMatchObject({ ok: true, mode: 'servidor' });
     expect((await app.inject({ url: '/api/state' })).statusCode).toBe(401);
+    expect((await app.inject({ url: '/api/auth/session' })).json()).toEqual({ user: null });
     const cookie = await login('admin', ADMIN_PW);
     const s = await app.inject({ url: '/api/auth/session', headers: { cookie } });
     expect(s.json().user).toMatchObject({ username: 'admin', role: 'administrador' });

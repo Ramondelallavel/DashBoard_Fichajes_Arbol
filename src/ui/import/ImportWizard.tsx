@@ -11,6 +11,7 @@ import { ImportFileError, readWorkbook, type WorkbookData } from '../../import/r
 import { cellText, toRawCell } from '../../import/values';
 import { incrementalAllowed, MODE_HELP, MODE_LABEL } from '../../import/versioning';
 import { saveFile } from '../../export/download';
+import { ApiError } from '../../data/backend';
 import { fmtNum } from '../../lib/format';
 import { ConfirmDialog, Notice } from '../components/common';
 import { Icon } from '../components/Icon';
@@ -30,6 +31,8 @@ export function ImportWizard({ kind, onClose }: { kind: SourceKind; onClose: () 
   const settings = useApp((s) => s.settings);
   const previous = useApp((s) => s.active[kind]);
   const commitImport = useApp((s) => s.commitImport);
+  const reload = useApp((s) => s.reload);
+  const [conflict, setConflict] = useState(false);
   const saveProfile = useApp((s) => s.saveProfile);
   const toast = useApp((s) => s.toast);
   const role = useApp((s) => s.role);
@@ -120,7 +123,13 @@ export function ImportWizard({ kind, onClose }: { kind: SourceKind; onClose: () 
       setStep(6);
       toast('ok', `${label} importado: versión ${prepared.dataset.version}.`);
     } catch (e) {
-      toast('error', `No se pudo guardar la importación: ${(e as Error).message}`);
+      // El error ya se ha notificado. Si otro usuario importó antes, se recargan los datos y se recalcula
+      // la validación frente a la nueva versión activa: el usuario revisa y confirma de nuevo.
+      if (e instanceof ApiError && e.status === 409) {
+        await reload();
+        setConflict(true);
+        setStep(4);
+      }
     }
   }
 
@@ -337,6 +346,7 @@ export function ImportWizard({ kind, onClose }: { kind: SourceKind; onClose: () 
 
         {step === 4 && prepared && (
           <>
+            {conflict && <Notice kind="warn">Otro usuario ha importado una nueva versión mientras preparaba esta importación. Los datos se han recargado y la validación se ha recalculado frente a la versión activa actual: revísela y vuelva a confirmar.</Notice>}
             <div className="grid grid-kpi">
               <div className="kpi"><span className="label">Filas leídas</span><span className="value">{fmtNum(prepared.result.counts.total)}</span><span className="sub">{fmtNum(prepared.result.counts.vacias)} vacías ignoradas</span></div>
               <div className="kpi"><span className="label">Correctas</span><span className="value">{fmtNum(prepared.result.counts.ok)}</span></div>

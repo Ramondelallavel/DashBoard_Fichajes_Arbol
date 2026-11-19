@@ -952,6 +952,33 @@ table.tbl {
   color: var(--crit-text);
 }
 
+.remote-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px max(16px, env(safe-area-inset-right, 0px)) 8px 20px;
+  background: var(--info-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
+  font-size: 13px;
+}
+.remote-banner .ico {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.login-wrap {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(160deg, var(--nav-bg) 0 38%, var(--bg) 38%);
+}
+.login-card {
+  width: min(420px, 100%);
+  box-shadow: var(--shadow-lg);
+}
+
 /* Drawer / modal */
 .overlay {
   position: fixed;

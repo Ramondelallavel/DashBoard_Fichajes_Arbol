@@ -10,6 +10,7 @@ import { naturalCompare, normalizeHeader } from '../../lib/text';
 import { Notice, Panel } from '../components/common';
 import { Icon } from '../components/Icon';
 import { PageHead } from './shared';
+import { UsuariosPanel } from './Usuarios';
 
 const WD = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
@@ -23,6 +24,7 @@ export function ConfiguracionPage() {
   const profiles = useApp((s) => s.profiles);
   const deleteProfile = useApp((s) => s.deleteProfile);
   const role = useApp((s) => s.role);
+  const mode = useApp((s) => s.mode);
   const toast = useApp((s) => s.toast);
   const { analysis } = useAnalysis();
   const [d, setD] = useState<Settings>(settings);
@@ -79,6 +81,11 @@ export function ConfiguracionPage() {
         lead="Reglas de cálculo explícitas y configurables. Ningún valor por defecto se presenta como dato: sin capacidad configurada no se calcula ocupación."
         actions={
           <>
+            {mode === 'servidor' && can(role, 'administrar_usuarios') && (
+              <button className="btn btn-sm" onClick={() => document.getElementById('usuarios')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                Usuarios y actividad
+              </button>
+            )}
             <button className="btn btn-sm" onClick={() => void exportCfg()}>
               <Icon name="download" /> Exportar configuración
             </button>
@@ -426,7 +433,15 @@ export function ConfiguracionPage() {
         </Panel>
       </div>
 
-      <Panel title="Perfiles de usuario y permisos" sub="Sin autenticación en esta versión: el perfil se elige en la barra superior. La matriz está preparada para conectarse a un proveedor de identidad.">
+      {mode === 'servidor' && can(role, 'administrar_usuarios') && <UsuariosPanel />}
+      <Panel
+        title="Perfiles de usuario y permisos"
+        sub={
+          mode === 'servidor'
+            ? 'Modo servidor: cada usuario inicia sesión y el servidor aplica estos permisos.'
+            : 'Modo local (sin servidor): el perfil se elige en la barra superior solo para probar los permisos. Para trabajar varios usuarios con inicio de sesión, ejecute la aplicación con su servidor (ver README).'
+        }
+      >
         <div className="table-wrap">
           <table className="tbl">
             <thead>
@@ -447,6 +462,7 @@ export function ConfiguracionPage() {
                   ['validar_relaciones', 'Validar relaciones del árbol'],
                   ['exportar', 'Exportar a Excel'],
                   ['borrar_datos', 'Borrar datos importados'],
+                  ['administrar_usuarios', 'Administrar usuarios y ver la actividad'],
                 ] as [Permission, string][]
               ).map(([perm, label]) => (
                 <tr key={perm}>

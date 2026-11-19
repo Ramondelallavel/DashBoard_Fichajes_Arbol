@@ -13,12 +13,18 @@ npm test
 npm run build && npm run samples && npm run e2e
 ```
 
-## Resultados de la última ejecución (19/11/2026)
+```bash
+npm run build:all && npm run e2e:server
+```
 
-- Comprobación de tipos (`tsc -b`, modo estricto): **sin errores**.
-- Vitest: **48 de 48 pruebas superadas** en 8 archivos.
-- Extremo a extremo en Chromium (`e2e/smoke.mjs`): **26 de 26 comprobaciones superadas**, sin errores de JavaScript ni de consola.
-- Rendimiento: 13.394 operaciones → importación 0,5 s · análisis completo 1,6 s · filtro 5 ms.
+## Resultados de la última ejecución (20/11/2026, fase de servidor multiusuario)
+
+- Comprobación de tipos (`tsc -b`, modo estricto, interfaz + servidor): **sin errores**.
+- Vitest: **61 de 61 pruebas superadas** en 10 archivos (incluye 12 del servidor y 1 del cálculo en segundo plano).
+- Extremo a extremo, modo local (`e2e/smoke.mjs`): **26 de 26**, sin errores de JavaScript ni de consola.
+- Extremo a extremo, modo servidor con dos usuarios en navegadores separados (`e2e/server.mjs`): **13 de 13**,
+  repetida 4 veces seguidas sin fallos tras corregir una espera de la propia prueba (ver abajo).
+- Rendimiento: 13.394 operaciones → importación 0,5 s · análisis completo 1,6 s (en segundo plano) · filtro 5 ms.
 - `npm audit`: 0 vulnerabilidades.
 
 ## Escenarios de aceptación
@@ -64,6 +70,19 @@ npm run build && npm run samples && npm run e2e
 | Trazabilidad de versiones anteriores | `versioning.test.ts`, historial en e2e | ✔ |
 | **Exportación** | `integration.test.ts` (metadatos, filtros, escape de fórmulas), e2e (descarga) | ✔ |
 | **Vista móvil (390 px) sin desplazamiento horizontal** | e2e | ✔ |
+| **Modo servidor** | | |
+| Inicio de sesión, cookie HttpOnly/SameSite, cabeceras de seguridad | `server.test.ts`, e2e servidor | ✔ |
+| Bloqueo tras 5 intentos fallidos | `server.test.ts` | ✔ |
+| Protección CSRF (cabecera propia y mismo origen) | `server.test.ts` | ✔ |
+| Permisos aplicados en el servidor (consulta, planificador, administrador; configuración por apartados) | `server.test.ts`, e2e servidor | ✔ |
+| Cambio de contraseña obligatorio en el primer acceso | `server.test.ts`, e2e servidor | ✔ |
+| Usuario y fecha de importaciones y revisiones fijados por el servidor | `server.test.ts`, e2e servidor | ✔ |
+| Conflicto de versiones entre dos importaciones simultáneas (409) | `server.test.ts` | ✔ |
+| Validación de los datos enviados por el cliente | `server.test.ts` | ✔ |
+| Datos compartidos y aviso de cambios de otro usuario | e2e servidor | ✔ |
+| Al menos un administrador activo; sesiones revocadas al desactivar | `server.test.ts` | ✔ |
+| Registro de actividad | `server.test.ts`, e2e servidor | ✔ |
+| Cálculo en Web Worker equivalente al cálculo directo | `worker.test.ts`, ambos e2e | ✔ |
 
 ## Errores encontrados por las pruebas y corregidos
 
@@ -74,8 +93,16 @@ npm run build && npm run samples && npm run e2e
   y ventana de 14 días para la prioridad invertida, con una prueba que verifica la equivalencia con el
   recuento día a día en 2.000 casos.
 
+- **Ruido en la consola en modo local**: la detección del servidor pasaba por el proxy de la vista previa y
+  generaba un error 500; ahora la vista previa no usa el proxy y en el visor de artefactos no se hace la petición.
+- **Prueba de servidor intermitente** (1 fallo en 5 ejecuciones): la prueba navegaba antes de que terminara la
+  recarga de datos tras «Actualizar ahora». Era un fallo de la prueba, no de la aplicación; ahora espera a que
+  desaparezca el aviso.
+
 ## Limitaciones de las pruebas
 
 - No se ha probado con los Excel reales de la empresa (no disponibles): la asignación de columnas y las reglas
   deberán validarse con ellos.
-- La prueba de extremo a extremo se ejecuta en Chromium; no se ha probado en Firefox ni Safari.
+- Las pruebas de extremo a extremo se ejecutan en Chromium; no se ha probado en Firefox ni Safari (no están
+  disponibles en el entorno de desarrollo).
+- No se ha probado el despliegue detrás de un proxy HTTPS real ni en Windows Server.

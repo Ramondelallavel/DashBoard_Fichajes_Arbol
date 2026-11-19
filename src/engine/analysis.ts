@@ -280,6 +280,14 @@ function addCombinedSaturation(comparison: ComparisonResult, load: Analysis['loa
   }
 }
 
+/**
+ * Reconstruye un análisis recibido por clonado estructurado (p. ej. desde un Web Worker):
+ * el calendario es una clase con métodos y se vuelve a crear a partir de la configuración.
+ */
+export function rehydrateAnalysis(a: Omit<Analysis, 'calendar'>): Analysis {
+  return { ...a, calendar: new CapacityCalendar(a.settings) };
+}
+
 export function opsOfAparato(model: ProductionModel, aparatoId: string): Operacion[] {
   const a = model.aparatos.get(aparatoId);
   if (!a) return [];

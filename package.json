@@ -13,15 +13,20 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "samples": "tsx scripts/generate-samples.mts",
-    "e2e": "node e2e/smoke.mjs"
+    "e2e": "node e2e/smoke.mjs",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist-server/server.mjs --log-level=warning",
+    "build:all": "npm run build && npm run build:server",
+    "start": "node dist-server/server.mjs",
+    "start:env": "node --env-file=.env dist-server/server.mjs",
+    "dev:server": "tsx watch server/index.ts",
+    "e2e:server": "node e2e/server.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "dependencies": {
     "@fastify/compress": "9.2.2",
     "@fastify/static": "10.1.9",
-    "date-fns": "4.1.0",
     "exceljs": "4.4.0",
     "fastify": "5.12.7",
     "papaparse": "5.5.3",

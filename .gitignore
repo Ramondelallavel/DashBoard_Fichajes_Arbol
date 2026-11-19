@@ -17,3 +17,7 @@ e2e/output/
 *.csv
 !samples/*.xlsx
 !samples/*.csv
+
+# Servidor: base de datos local y build
+data/
+dist-server/

@@ -25,6 +25,7 @@ export function ImportacionPage() {
   const resetData = useApp((s) => s.resetData);
   const toast = useApp((s) => s.toast);
   const repo = useApp((s) => s.repo);
+  const mode = useApp((s) => s.mode);
   const [wizard, setWizard] = useState<SourceKind>();
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -145,7 +146,12 @@ export function ImportacionPage() {
         lead="Dos módulos independientes. Cada importación queda registrada con su archivo, fecha, usuario, recuentos y versión de los datos; las versiones anteriores se conservan para compararlas."
         actions={
           <>
-            <button className="btn" disabled={!can(role, 'importar')} onClick={() => (hasData ? setConfirmDemo(true) : void loadDemo())}>
+            <button
+              className="btn"
+              disabled={!can(role, mode === 'servidor' ? 'borrar_datos' : 'importar')}
+              title={mode === 'servidor' && !can(role, 'borrar_datos') ? 'En modo servidor solo un administrador puede cargar la demostración, porque sustituye los datos compartidos' : undefined}
+              onClick={() => (hasData ? setConfirmDemo(true) : void loadDemo())}
+            >
               Cargar datos de demostración
             </button>
             <button className="btn btn-danger" disabled={!can(role, 'borrar_datos') || !hasData} onClick={() => setConfirmReset(true)}>
@@ -321,7 +327,7 @@ export function ImportacionPage() {
       {confirmDemo && (
         <ConfirmDialog
           title="Cargar datos de demostración"
-          message="Los datos de demostración son ficticios y sustituyen a los datos importados actualmente (el historial también se reinicia). La configuración de capacidad se ajusta a los puestos ficticios."
+          message={`Los datos de demostración son ficticios y sustituyen a los datos importados actualmente (el historial también se reinicia). La configuración de capacidad se ajusta a los puestos ficticios.${mode === 'servidor' ? ' En modo servidor el cambio afecta a todos los usuarios.' : ''}`}
           confirmLabel="Cargar demostración"
           danger
           requireCheck="Entiendo que se borran los datos importados actuales"
@@ -335,7 +341,7 @@ export function ImportacionPage() {
       {confirmReset && (
         <ConfirmDialog
           title="Borrar datos importados"
-          message="Se eliminarán todas las importaciones, versiones, revisiones de alertas y validaciones manuales guardadas en este navegador. La configuración y los perfiles de columnas se conservan."
+          message={`Se eliminarán todas las importaciones, versiones, revisiones de alertas y validaciones manuales ${mode === 'servidor' ? 'del servidor, para todos los usuarios' : 'guardadas en este navegador'}. La configuración y los perfiles de columnas se conservan.`}
           confirmLabel="Borrar"
           danger
           requireCheck="Entiendo que esta acción no se puede deshacer"
