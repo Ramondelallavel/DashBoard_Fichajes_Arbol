@@ -291,7 +291,17 @@ export function MultiSelect({ label, options, value, onChange, placeholder = 'To
   const sel = new Set(value);
   const text = value.length === 0 ? placeholder : value.length <= 2 ? value.join(', ') : `${value.length} seleccionados`;
   return (
-    <div className="field ms" ref={ref}>
+    <div
+      className="field ms"
+      ref={ref}
+      onKeyDown={(e) => {
+        // Escape cierra solo la lista desplegable, no el panel que la contiene
+        if (e.key === 'Escape' && open) {
+          e.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
       <label htmlFor={id}>{label}</label>
       <button id={id} type="button" className="ms-btn" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className={`val${value.length ? '' : ' muted'}`}>{text}</span>

@@ -12,7 +12,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "samples": "tsx scripts/generate-samples.ts",
+    "samples": "tsx scripts/generate-samples.mts",
     "e2e": "node e2e/smoke.mjs"
   },
   "engines": {

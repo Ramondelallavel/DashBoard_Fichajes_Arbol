@@ -76,7 +76,13 @@ export function OperationDetail({ analysis: a, opKey, ortemsRid, onClose }: { an
       )}
       {ort && !op && (
         <>
-          <Notice kind="warn">Este registro de Ortems no tiene correspondencia en el Excel de producción.</Notice>
+          {a.match.matches.has(ort.rid) ? (
+            <Notice kind="info">Registro de Ortems emparejado con producción por la regla «{a.match.matches.get(ort.rid)!.rule.label}».</Notice>
+          ) : a.match.ambiguous.some((x) => x.rid === ort.rid) ? (
+            <Notice kind="warn">Correspondencia ambigua: varias órdenes de producción encajan con este registro. No se ha emparejado automáticamente.</Notice>
+          ) : (
+            <Notice kind="warn">Este registro de Ortems no tiene correspondencia en el Excel de producción.</Notice>
+          )}
           <dl className="kv">
             <dt>Orden / preorden</dt>
             <dd className="id">{ort.ordenId ?? '—'} / {ort.preordenId ?? '—'}</dd>
