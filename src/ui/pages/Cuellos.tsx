@@ -14,15 +14,73 @@ import { OperationDetail } from '../components/OperationDetail';
 import { useExport } from '../components/useExport';
 import { PageHead } from './shared';
 
+const BASE_LABEL = { produccion: 'producción', ortems: 'Ortems', combinada: 'producción + solo-Ortems' } as const;
+
+/** Capacidad demostrada por sección (fichajes) frente a la carga planificada. Siempre ESTIMADA. */
+function DemonstratedPanel() {
+  const { analysis: a } = useAnalysis();
+  if (!a || !a.demonstrated.rows.some((r) => r.weeks > 0)) return null;
+  const rows = a.demonstrated.rows.filter((r) => r.weeks > 0 || r.planned.length);
+  const weeks = [...new Set(rows.flatMap((r) => r.planned.map((p) => p.week)))].sort().slice(0, 6);
+  return (
+    <Panel
+      title="Capacidad demostrada por sección (según fichajes)"
+      sub={`Horas de las preórdenes ejecutadas por cada sección en las últimas ${a.settings.load.demonstratedWeeks} semanas, frente a la carga planificada de las próximas semanas. Es una referencia ESTIMADA, no la capacidad nominal.`}
+      flush
+    >
+      <div className="table-wrap" style={{ maxHeight: 460 }}>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Sección</th>
+              <th className="num">Semanas con fichajes</th>
+              <th className="num">Media semanal</th>
+              <th className="num">Mejor semana</th>
+              {weeks.map((w) => (
+                <th key={w} className="num">
+                  Plan {weekLabel(w)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.seccion}>
+                <td className="id">{r.seccion}</td>
+                <td className="num">{r.weeks}</td>
+                <td className="num">{r.weeks ? fmtHours(r.meanH) : '—'}</td>
+                <td className="num">{r.weeks ? fmtHours(r.maxH) : '—'}</td>
+                {weeks.map((w) => {
+                  const p = r.planned.find((x) => x.week === w);
+                  const over = p?.ratioMax !== undefined && p.ratioMax > 1 && r.weeks >= 2;
+                  return (
+                    <td key={w} className="num" title={p?.ratioMax !== undefined ? `${fmtPct(p.ratioMax)} de la mejor semana` : r.weeks < 2 ? 'Historial insuficiente' : undefined} style={over ? { color: 'var(--crit-text)', fontWeight: 600 } : undefined}>
+                      {p ? fmtHours(p.hours) : '—'}
+                      {p?.ratioMax !== undefined && <div className="small muted">{fmtPct(p.ratioMax)}</div>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 export function CuellosPage() {
   const { analysis: a } = useAnalysis();
-  const [src, setSrc] = useState<'produccion' | 'combinada'>('produccion');
+  const [srcSel, setSrc] = useState<'base' | 'produccion' | 'ortems' | 'combinada'>('base');
   const [op, setOp] = useState<string>();
   const selectPuesto = useApp((s) => s.selectPuesto);
   const exp = useExport();
   if (!a) return <NoData />;
-  const b = src === 'produccion' ? a.bottlenecks : a.bottlenecksCombined;
-  const conflicts = a.overlaps.produccion.filter((g) => g.clase !== 'solape_dentro_capacidad' && g.end >= a.refMs).sort((x, y) => (x.clase === 'sobrecarga_confirmada' ? -1 : 1) - (y.clase === 'sobrecarga_confirmada' ? -1 : 1) || x.start - y.start);
+  const src = srcSel === 'base' ? a.loadBase : srcSel;
+  const b = a.bottlenecksBy[src];
+  const ovSrc = src === 'ortems' ? a.overlaps.ortems : a.overlaps.produccion;
+  const potenciales = ovSrc.filter((g) => g.clase === 'solape_potencial' && g.end >= a.refMs).length;
+  const conflicts = ovSrc.filter((g) => g.clase !== 'solape_dentro_capacidad' && g.clase !== 'solape_potencial' && g.end >= a.refMs).sort((x, y) => (x.clase === 'sobrecarga_confirmada' ? -1 : 1) - (y.clase === 'sobrecarga_confirmada' ? -1 : 1) || x.start - y.start);
   const unknown = b.ranking.filter((r) => r.capSource === 'desconocida' && r.futureH > 0);
   const cols = (scope: 'puesto' | 'seccion'): Column<ResourceRanking>[] => [
     { id: 'id', header: scope === 'puesto' ? 'Puesto' : 'Sección', width: scope === 'puesto' ? '80px' : 'minmax(120px,1fr)', render: (r) => <span className="id">{r.id}</span>, sort: (r) => r.id },
@@ -45,13 +103,26 @@ export function CuellosPage() {
         lead={`Saturaciones previstas en las próximas ${a.settings.horizonWeeks} semanas y recursos con trabajos incompatibles. «Confirmado» exige capacidad configurada; sin ella se informa de la carga como hipótesis.`}
         actions={
           <>
-            <Seg label="Base de cálculo" value={src} onChange={setSrc} items={[{ id: 'produccion', label: 'Producción' }, { id: 'combinada', label: 'Producción + solo-Ortems', title: 'Suma la carga de órdenes y preórdenes que solo están en Ortems' }]} />
+            <Seg
+              label="Base de cálculo"
+              value={srcSel}
+              onChange={setSrc}
+              items={[
+                { id: 'base', label: `Automática (${BASE_LABEL[a.loadBase]})`, title: a.loadBaseReason },
+                { id: 'produccion', label: 'Producción' },
+                { id: 'ortems', label: 'Ortems' },
+                { id: 'combinada', label: 'Producción + solo-Ortems', title: 'Suma la carga de órdenes y preórdenes que solo están en Ortems' },
+              ]}
+            />
             <button className="btn" disabled={!exp.allowed || exp.busy} onClick={() => void exp.run('cuellos_botella', 'Cuellos de botella', (ctx) => bottleneckSheets(ctx.analysis))}>
               <Icon name="download" /> Exportar listado
             </button>
           </>
         }
       />
+      <Notice kind="info">
+        Base del análisis: <strong>{BASE_LABEL[src]}</strong>. {srcSel === 'base' ? a.loadBaseReason : 'Elegida en esta página.'}
+      </Notice>
       <Panel title="Avisos de saturación futura" sub="Cada mensaje está respaldado por el cálculo de carga/capacidad o de simultaneidad">
         {b.forecasts.length ? (
           <div className="stack">
@@ -86,13 +157,18 @@ export function CuellosPage() {
           {unknown.length} puesto(s) con carga futura no tienen capacidad configurada ({unknown.map((u) => u.id).join(', ')}): no se puede confirmar si son cuellos de botella. Configure su capacidad o active la capacidad supuesta (los resultados serían estimados).
         </Notice>
       )}
+      <DemonstratedPanel />
       <Panel title="Puestos ordenados por ocupación prevista" flush>
         <DataTable label="Ranking de puestos" rows={b.ranking} columns={cols('puesto')} rowKey={(r) => r.id} height={420} minWidth={1240} onRowClick={(r) => { selectPuesto(r.id); go('puestos'); }} />
       </Panel>
       <Panel title="Secciones ordenadas por ocupación prevista" flush>
         <DataTable label="Ranking de secciones" rows={b.seccionRanking} columns={cols('seccion')} rowKey={(r) => r.id} height={300} minWidth={1100} />
       </Panel>
-      <Panel title={`Operaciones que necesitan el mismo recurso en periodos incompatibles (${conflicts.length})`} sub="Planificación de producción, desde la fecha de referencia" flush>
+      <Panel
+        title={`Trabajos que necesitan el mismo recurso en periodos incompatibles (${conflicts.length})`}
+        sub={`Planificación ${src === 'ortems' ? 'de Ortems' : 'de producción'}, desde la fecha de referencia${potenciales ? ` · ${potenciales} solapes más sin capacidad paralela configurada (potenciales, no se listan)` : ''}`}
+        flush
+      >
         <div className="table-wrap" style={{ maxHeight: 420 }}>
           <table className="tbl">
             <thead>
@@ -107,7 +183,7 @@ export function CuellosPage() {
               </tr>
             </thead>
             <tbody>
-              {conflicts.map((g) => (
+              {conflicts.slice(0, 300).map((g) => (
                 <tr key={g.id}>
                   <td>
                     {g.clase === 'sobrecarga_confirmada' ? <ConfPill c="confirmado" /> : g.clase === 'sobrecarga_estimada' ? <ConfPill c="estimado" /> : <ConfPill c="sin_capacidad" />}
@@ -123,11 +199,20 @@ export function CuellosPage() {
                   <td className="num">{g.maxConcurrency}</td>
                   <td className="num">{g.units ?? '?'}</td>
                   <td className="small">
-                    {g.ids.map((k) => (
-                      <button key={k} className="btn btn-ghost btn-sm" style={{ padding: '0 4px' }} onClick={() => setOp(k)}>
-                        <span className="id">{k.replace('|', '/')}</span>
-                      </button>
-                    ))}
+                    {src === 'ortems'
+                      ? g.ids.slice(0, 12).map((k) => {
+                          const r = a.ortems.get(k);
+                          return (
+                            <span key={k} className="id" style={{ marginRight: 6 }}>
+                              {r?.preordenId ?? r?.ordenId ?? k}
+                            </span>
+                          );
+                        })
+                      : g.ids.map((k) => (
+                          <button key={k} className="btn btn-ghost btn-sm" style={{ padding: '0 4px' }} onClick={() => setOp(k)}>
+                            <span className="id">{k.replace('|', '/')}</span>
+                          </button>
+                        ))}
                   </td>
                 </tr>
               ))}

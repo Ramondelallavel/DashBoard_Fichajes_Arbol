@@ -353,6 +353,17 @@ export function ImportWizard({ kind, onClose }: { kind: SourceKind; onClose: () 
               <div className="kpi state-med"><span className="label">Pendientes de revisión</span><span className="value">{fmtNum(prepared.result.counts.revision)}</span><span className="sub">se importan con aviso</span></div>
               <div className="kpi state-crit"><span className="label">Rechazadas</span><span className="value">{fmtNum(prepared.result.counts.rechazado)}</span><span className="sub">no se usan en el análisis</span></div>
             </div>
+            {kind === 'produccion' && (opts.repeatedKeys === 'consolidar' || prepared.result.issueStats.some((st) => st.code === 'CLAVE_DUPLICADA')) && (
+              <Notice kind="info">
+                <label className="check" style={{ margin: 0 }}>
+                  <input type="checkbox" checked={opts.repeatedKeys === 'consolidar'} onChange={(e) => setOpts({ ...opts, repeatedKeys: e.target.checked ? 'consolidar' : 'conflicto' })} />
+                  Consolidar las filas repetidas de una misma orden/preorden (p. ej. un Excel de fichajes con una fila por fichaje)
+                </label>
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  Activado: las filas con la misma clave se tratan como registros de la misma orden (fechas mínima y máxima, último estado, mayor avance) y no como duplicados. Desactivado: cada repetición se marca como conflicto para revisarla.
+                </div>
+              </Notice>
+            )}
             {prepared.result.issueStats.length ? (
               <div className="table-wrap" style={{ maxHeight: 380 }}>
                 <table className="tbl">

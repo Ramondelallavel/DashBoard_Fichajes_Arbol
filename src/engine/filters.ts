@@ -1,7 +1,8 @@
 import type { EstadoCanonico } from '../domain/types';
 import { addDays, isoWeekStart, parseDayKey } from '../lib/dates';
-import { searchable } from '../lib/text';
+import { naturalCompare, searchable } from '../lib/text';
 import { isAdelantada, isRetrasada, type Analysis } from './analysis';
+import { opSpan } from './model';
 
 export type FuenteFiltro = 'todas' | 'produccion' | 'ortems' | 'ambas';
 
@@ -70,6 +71,7 @@ export const ESTADO_LABEL: Record<EstadoCanonico, string> = {
   en_curso: 'En curso',
   terminada: 'Terminada',
   bloqueada: 'Bloqueada',
+  anulada: 'Anulada',
   desconocido: 'Sin estado',
 };
 
@@ -218,7 +220,7 @@ export function applyFilters(a: Analysis, f: FilterState): FilterResult {
     if (secciones && !(op.seccion && secciones.has(op.seccion))) continue;
     if (areas && !(op.area && areas.has(op.area))) continue;
     if (centros && !(op.centro && centros.has(op.centro))) continue;
-    if (ordenes && !ordenes.has(op.ordenId)) continue;
+    if (ordenes && !ordenes.has(op.ordenId) && !(ord?.ordenId && ordenes.has(ord.ordenId))) continue;
     if (estados && !estados.has(op.estado)) continue;
     const row = a.comparison.byOp.get(op.key) ?? a.comparison.byOrden.get(op.ordenId)?.find((r) => r.level === 'orden');
     if (prioridades && !(row?.prioridadRaw && prioridades.has(row.prioridadRaw)) && !(op.prioridadRaw && prioridades.has(op.prioridadRaw))) continue;
@@ -229,7 +231,8 @@ export function applyFilters(a: Analysis, f: FilterState): FilterResult {
     if (f.fuente === 'ortems' && !inOrtems) continue;
     if (f.fuente === 'ambas' && !inOrtems) continue;
     if (time.length) {
-      const okProd = intersects(op.start, op.end, time);
+      const span = opSpan(op);
+      const okProd = intersects(span?.start, span?.end, time);
       const okOrt = f.fuente !== 'produccion' && row && intersects(row.ortStart, row.ortEnd, time);
       if (!okProd && !okOrt) continue;
     }
@@ -257,16 +260,19 @@ export function applyFilters(a: Analysis, f: FilterState): FilterResult {
     for (const rid of a.match.ortemsOnly) {
       const r = a.ortems.get(rid);
       if (!r) continue;
-      const sec = r.puestoId ? model.puestos.get(r.puestoId)?.seccion : undefined;
-      if (aparatos && !(r.aparatoId && aparatos.has(r.aparatoId))) continue;
+      const sec = r.seccion ?? (r.puestoId ? model.puestos.get(r.puestoId)?.seccion : undefined);
+      const apId = a.ortemsAparato.get(rid) ?? r.aparatoId;
+      if (aparatos && !(apId && aparatos.has(apId))) continue;
       if (articulos && !(r.articuloRef && articulos.has(r.articuloRef))) continue;
-      if (familias || areas || centros || estados || desc) continue;
+      if (familias && !(r.familia && familias.has(r.familia))) continue;
+      if (desc && !searchable(r.articuloDesc).includes(desc)) continue;
+      if (areas || centros || estados) continue;
       if (puestos && !(r.puestoId && puestos.has(r.puestoId))) continue;
       if (secciones && !(sec && secciones.has(sec))) continue;
       if (ordenes && !(r.ordenId && ordenes.has(r.ordenId))) continue;
       if (prioridades && !(r.prioridadRaw && prioridades.has(r.prioridadRaw))) continue;
       if (pre && !searchable(r.preordenId).includes(pre)) continue;
-      if (q && !searchable(`${r.aparatoId ?? ''} ${r.ordenId ?? ''} ${r.preordenId ?? ''} ${r.articuloRef ?? ''} ${r.puestoId ?? ''} ${r.operacionId ?? ''}`).includes(q)) continue;
+      if (q && !searchable(`${apId ?? ''} ${r.articuloDesc ?? ''} ${r.ordenId ?? ''} ${r.preordenId ?? ''} ${r.articuloRef ?? ''} ${r.puestoId ?? ''} ${r.operacionId ?? ''}`).includes(q)) continue;
       if (time.length && !intersects(r.inicio, r.fin, time)) continue;
       if (flagsOn.length && !(flagsOn.length === 1 && flagsOn[0] === 'sinCorrespondencia')) continue;
       out.ortemsOnly.add(rid);
@@ -278,20 +284,23 @@ export function applyFilters(a: Analysis, f: FilterState): FilterResult {
 /** Valores disponibles para los selectores de filtros. */
 export function filterOptions(a: Analysis) {
   const m = a.model;
-  const uniq = (xs: (string | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort((x, y) => x.localeCompare(y, 'es', { numeric: true }));
+  const uniq = (xs: (string | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort(naturalCompare);
   const ops = [...m.ops.values()];
   const years = new Set<number>();
   for (const op of ops) {
-    if (op.start) years.add(new Date(op.start).getFullYear());
-    if (op.end) years.add(new Date(op.end).getFullYear());
+    const span = opSpan(op);
+    if (span) {
+      years.add(new Date(span.start).getFullYear());
+      years.add(new Date(span.end).getFullYear());
+    }
   }
   for (const r of a.ortemsList) if (r.inicio) years.add(new Date(r.inicio).getFullYear());
   return {
-    aparatos: uniq([...m.aparatos.keys(), ...a.ortemsList.map((r) => r.aparatoId)]),
+    aparatos: uniq([...m.aparatos.keys(), ...a.ortemsList.map((r) => a.ortemsAparato.get(r.rid) ?? r.aparatoId)]),
     articulos: uniq(ops.map((o) => o.articuloRef).concat([...m.ordenes.values()].map((o) => o.articuloRef), a.ortemsList.map((r) => r.articuloRef))),
-    familias: m.familias,
+    familias: uniq([...m.familias, ...a.ortemsList.map((r) => r.familia)]),
     puestos: uniq([...m.puestos.keys(), ...a.ortemsList.map((r) => r.puestoId)]),
-    secciones: m.secciones,
+    secciones: uniq([...m.secciones, ...a.ortemsList.map((r) => r.seccion)]),
     areas: uniq(ops.map((o) => o.area)),
     centros: uniq(ops.map((o) => o.centro)),
     ordenes: uniq([...m.ordenes.keys(), ...a.ortemsList.map((r) => r.ordenId)]),

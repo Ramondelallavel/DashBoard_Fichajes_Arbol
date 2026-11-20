@@ -17,15 +17,21 @@ npm run build && npm run samples && npm run e2e
 npm run build:all && npm run e2e:server
 ```
 
-## Resultados de la última ejecución (20/11/2026, fase de servidor multiusuario)
+## Resultados de la última ejecución (20/11/2026, adaptación a los Excel reales)
 
 - Comprobación de tipos (`tsc -b`, modo estricto, interfaz + servidor): **sin errores**.
-- Vitest: **61 de 61 pruebas superadas** en 10 archivos (incluye 12 del servidor y 1 del cálculo en segundo plano).
+- Vitest: **69 de 69 pruebas superadas** en 11 archivos. Nuevas: `realformat.test.ts` (8), con ficheros que
+  tienen las columnas reales y valores ficticios: reconocimiento de formatos, consolidación de fichajes, padre
+  planificado en Ortems, base automática, capacidad demostrada, aparato con otra notación, terminada
+  planificada, agrupación de alertas y guarda de ambigüedad del aparato.
 - Extremo a extremo, modo local (`e2e/smoke.mjs`): **26 de 26**, sin errores de JavaScript ni de consola.
-- Extremo a extremo, modo servidor con dos usuarios en navegadores separados (`e2e/server.mjs`): **13 de 13**,
-  repetida 4 veces seguidas sin fallos tras corregir una espera de la propia prueba (ver abajo).
-- Rendimiento: 13.394 operaciones → importación 0,5 s · análisis completo 1,6 s (en segundo plano) · filtro 5 ms.
-- `npm audit`: 0 vulnerabilidades.
+- Extremo a extremo, modo servidor (`e2e/server.mjs`): **13 de 13**.
+- **Validación local con los Excel reales** (no versionados; prueba fuera del repositorio): importación con el
+  asistente de ambos ficheros (≈ 100 000 filas de fichajes y ≈ 32 000 registros de Ortems), recorrido de todas
+  las secciones sin errores de JavaScript ni de consola. Análisis completo ≈ 5 s en Node y ≈ 8-10 s en el
+  navegador (en segundo plano, mostrando el análisis anterior mientras tanto).
+- Rendimiento corregido durante la validación: la comparación de textos creaba un `Collator` en cada llamada
+  (análisis 7,5 s → 4,8 s) y la tabla virtual reordenaba todas las filas en cada desplazamiento.
 
 ## Escenarios de aceptación
 
@@ -101,8 +107,8 @@ npm run build:all && npm run e2e:server
 
 ## Limitaciones de las pruebas
 
-- No se ha probado con los Excel reales de la empresa (no disponibles): la asignación de columnas y las reglas
-  deberán validarse con ellos.
+- Los Excel reales se han validado localmente, pero no forman parte de las pruebas automáticas (son datos
+  privados): las pruebas usan su estructura con valores ficticios. Ver [DATOS_REALES.md](DATOS_REALES.md).
 - Las pruebas de extremo a extremo se ejecutan en Chromium; no se ha probado en Firefox ni Safari (no están
   disponibles en el entorno de desarrollo).
 - No se ha probado el despliegue detrás de un proxy HTTPS real ni en Windows Server.

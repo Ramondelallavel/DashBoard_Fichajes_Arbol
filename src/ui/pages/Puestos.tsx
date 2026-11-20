@@ -15,6 +15,7 @@ import { Icon } from '../components/Icon';
 import { OperationDetail } from '../components/OperationDetail';
 import { useExport } from '../components/useExport';
 import { FiltersRow, PageHead, useFilteredLoad } from './shared';
+import { naturalCompare } from '../../lib/text';
 
 export function PuestosPage({ onFilters }: { onFilters: () => void }) {
   const { analysis: a, filtered } = useAnalysis();
@@ -40,7 +41,7 @@ export function PuestosPage({ onFilters }: { onFilters: () => void }) {
         const conflicts = a.overlaps.produccion.filter((g) => g.puestoId === id && g.clase !== 'solape_dentro_capacidad').length;
         return { id, p, rl, rk, cap, ops: ops.length, conflicts };
       })
-      .sort((x, y) => (y.rk?.peakOccupancy ?? -1) - (x.rk?.peakOccupancy ?? -1) || x.id.localeCompare(y.id, 'es', { numeric: true }));
+      .sort((x, y) => (y.rk?.peakOccupancy ?? -1) - (x.rk?.peakOccupancy ?? -1) || naturalCompare(x.id, y.id));
   }, [a, load, filtered]);
 
   if (!a || !load) return <NoData />;

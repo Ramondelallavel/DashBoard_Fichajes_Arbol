@@ -50,11 +50,12 @@ export type IssueCode =
   | 'CLAVE_DUPLICADA'
   | 'VALOR_DISCREPANTE_HOJAS'
   | 'ESTADO_DESCONOCIDO'
-  | 'PRIORIDAD_NO_INTERPRETABLE';
+  | 'PRIORIDAD_NO_INTERPRETABLE'
+  | 'FILAS_CONSOLIDADAS';
 
 export type RecordStatus = 'ok' | 'revision' | 'rechazado';
 
-export type EstadoCanonico = 'pendiente' | 'en_curso' | 'terminada' | 'bloqueada' | 'desconocido';
+export type EstadoCanonico = 'pendiente' | 'en_curso' | 'terminada' | 'bloqueada' | 'anulada' | 'desconocido';
 
 /** Registro normalizado del Excel de producción (una fila de planificación). */
 export interface ProdRecord {
@@ -85,6 +86,8 @@ export interface ProdRecord {
   /** Duración prevista normalizada a horas. */
   duracionH?: number;
   cantidad?: number;
+  /** Porcentaje de avance declarado (0-100), p. ej. en los fichajes. */
+  avance?: number;
   estadoRaw?: string;
   estado?: EstadoCanonico;
   prioridadRaw?: string;
@@ -103,6 +106,10 @@ export interface OrtemsRecord {
   preordenId?: string;
   aparatoId?: string;
   articuloRef?: string;
+  articuloDesc?: string;
+  familia?: string;
+  modelo?: string;
+  seccion?: string;
   operacionId?: string;
   puestoId?: string;
   inicio?: number;
@@ -146,6 +153,12 @@ export interface ParseOptions {
   dateOrder: 'DMY' | 'MDY' | 'YMD';
   durationUnit: 'h' | 'min' | 's';
   decimalSeparator: 'auto' | ',' | '.';
+  /**
+   * Qué hacer con varias filas con la misma clave:
+   * - conflicto: se avisa (pendiente de revisión) y el modelo usa la primera.
+   * - consolidar: son avances/fichajes del mismo registro y se agregan (inicio mínimo, fin máximo, mayor avance).
+   */
+  repeatedKeys?: 'conflicto' | 'consolidar';
 }
 
 export interface ImportCounts {
@@ -223,6 +236,8 @@ export interface RecordDiff {
 export interface MappingProfile {
   id: string;
   name: string;
+  /** Perfil incluido en la aplicación para un formato conocido (no se guarda ni se borra). */
+  builtin?: boolean;
   kind: SourceKind;
   role: SheetRole;
   /** Firma de cabeceras normalizadas, para reconocer el mismo formato de Excel. */

@@ -51,6 +51,12 @@ export interface Settings {
     rules: MatchRule[];
     caseInsensitive: boolean;
     stripLeadingZeros: boolean;
+    /**
+     * Cómo comparar el número de aparato entre fuentes (el original nunca se modifica):
+     * exacto · sin_ceros (0012345 = 12345) · solo_digitos (V0012345 = 12345).
+     * Si dos aparatos distintos de producción coinciden con la misma clave, no se enlaza (ambiguo).
+     */
+    aparatoKey: 'exacto' | 'sin_ceros' | 'solo_digitos';
   };
 
   tolerance: { value: number; unit: 'horas' | 'dias_laborables' };
@@ -80,6 +86,13 @@ export interface Settings {
   load: {
     /** Si falta la duración, estimarla a partir de las fechas (marcado como ESTIMADO). */
     estimateDurationFromDates: boolean;
+    /**
+     * Planificación sobre la que se calculan los cuellos de botella futuros.
+     * auto: producción si tiene fechas previstas futuras; si no (p. ej. solo fichajes reales), Ortems.
+     */
+    base: 'auto' | 'produccion' | 'ortems' | 'combinada';
+    /** Semanas de fichajes usadas para calcular la capacidad demostrada por sección. */
+    demonstratedWeeks: number;
   };
 
   /** Traducción de textos de estado a estado canónico (claves normalizadas). */
@@ -115,6 +128,14 @@ export const DEFAULT_STATE_MAP: Record<string, EstadoCanonico> = {
   bloqueado: 'bloqueada',
   parada: 'bloqueada',
   retenida: 'bloqueada',
+  anulada: 'anulada',
+  anulado: 'anulada',
+  cancelada: 'anulada',
+  // códigos abreviados habituales en los sistemas de planta
+  fin: 'terminada',
+  ec: 'en_curso',
+  lan: 'pendiente',
+  anu: 'anulada',
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -132,6 +153,7 @@ export const DEFAULT_SETTINGS: Settings = {
     ],
     caseInsensitive: true,
     stripLeadingZeros: false,
+    aparatoKey: 'solo_digitos',
   },
   tolerance: { value: 1, unit: 'dias_laborables' },
   highDeviationDays: 5,
@@ -146,7 +168,7 @@ export const DEFAULT_SETTINGS: Settings = {
     inheritAparatoFromParent: true,
     waitThresholdDays: 3,
   },
-  load: { estimateDurationFromDates: true },
+  load: { estimateDurationFromDates: true, base: 'auto', demonstratedWeeks: 8 },
   stateMap: DEFAULT_STATE_MAP,
   keepVersions: 10,
 };

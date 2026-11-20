@@ -7,7 +7,7 @@ import { analyzeAparato } from '../../engine/aparato';
 import type { Analysis } from '../../engine/analysis';
 import { CONFIANZA_LABEL } from '../../engine/bottlenecks';
 import { DISCREPANCY_LABEL } from '../../engine/comparison';
-import type { Orden } from '../../engine/model';
+import { nodeName, opSpan, type Orden } from '../../engine/model';
 import { treeSheet } from '../../export/reports';
 import { fmtDate, fmtDateTime, weekLabel } from '../../lib/dates';
 import { fmtHours, fmtNum, fmtSigned } from '../../lib/format';
@@ -47,13 +47,17 @@ function OrdenNode({ a, o, depth, onOp, seen }: { a: Analysis; o: Orden; depth: 
   return (
     <div>
       <div className="tree-node">
-        <button className="tree-toggle" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={`${open ? 'Contraer' : 'Desplegar'} orden ${o.id}`}>
+        <button className="tree-toggle" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={`${open ? 'Contraer' : 'Desplegar'} ${nodeName(o).toLowerCase()}`}>
           {open ? '▾' : '▸'}
         </button>
         <div className="tree-title">
-          <strong>Orden <span className="id">{o.id}</span></strong>
+          <strong>
+            {o.tipo === 'preorden' ? 'Preorden' : 'Orden'} <span className="id">{o.id}</span>
+          </strong>
           <span className="muted small">{o.articuloRef} {o.articuloDesc ? `· ${o.articuloDesc}` : ''}</span>
-          {o.preordenId && <span className="tag">preorden {o.preordenId}</span>}
+          {o.tipo === 'orden' && o.preordenId && <span className="tag">preorden {o.preordenId}</span>}
+          {o.tipo === 'preorden' && o.ordenId && <span className="tag">OF {o.ordenId}</span>}
+          {ops.length === 1 && ops[0].operacionId === undefined && ops[0].seccion && <span className="tag">{ops[0].seccion}</span>}
         </div>
         <div className="tree-meta">
           {rel ? (
@@ -61,11 +65,12 @@ function OrdenNode({ a, o, depth, onOp, seen }: { a: Analysis; o: Orden; depth: 
               <LinkPill s={rel} />
             </span>
           ) : (
-            <span className="small muted">orden raíz</span>
+            <span className="small muted">{o.tipo === 'preorden' ? 'preorden raíz' : 'orden raíz'}</span>
           )}
           <EstadoPill e={o.estado} />
-          <span className="small muted nowrap">
-            {fmtDate(o.start)} → {fmtDate(o.end)}
+          <span className="small muted nowrap" title={o.start === undefined && o.realStart !== undefined ? 'Fechas reales (fichajes)' : 'Fechas previstas'}>
+            {fmtDate(o.start ?? o.realStart)} → {fmtDate(o.end ?? o.realEnd)}
+            {o.start === undefined && o.realStart !== undefined ? ' (real)' : ''}
           </span>
         </div>
       </div>
@@ -73,7 +78,8 @@ function OrdenNode({ a, o, depth, onOp, seen }: { a: Analysis; o: Orden; depth: 
         <div className="tree-children">
           {o.parentId && (
             <div className="dep" style={{ padding: '2px 8px' }}>
-              Relación con la orden padre <span className="id">{o.parentId}</span>: {o.parentRule}
+              {o.tipo === 'preorden' ? 'Preorden siguiente' : 'Relación con la orden padre'} <span className="id">{o.parentId}</span>: {o.parentRule}
+              {o.parentExternal ? ' · planificada en Ortems, todavía sin fichajes en producción' : ''}
             </div>
           )}
           {ops.map((op) => (
@@ -84,10 +90,11 @@ function OrdenNode({ a, o, depth, onOp, seen }: { a: Analysis; o: Orden; depth: 
               <div className="tree-title" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
                 <span className="row" style={{ gap: 8 }}>
                   <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px' }} onClick={() => onOp(op.key)}>
-                    <span className="id">Op. {op.label}</span>
+                    <span className="id">{op.operacionId !== undefined ? `Op. ${op.label}` : 'Ejecución'}</span>
                   </button>
                   <span>{op.desc}</span>
-                  <span className="tag">{op.puestoId ?? 'sin puesto'}</span>
+                  {(op.puestoId || a.model.has.puestos) && <span className="tag">{op.puestoId ?? 'sin puesto'}</span>}
+                  {op.avance !== undefined && <span className="small muted">avance {op.avance} %</span>}
                   <span className="small muted">{op.seccion}</span>
                   <OpFlags a={a} opKey={op.key} />
                 </span>
@@ -108,7 +115,8 @@ function OrdenNode({ a, o, depth, onOp, seen }: { a: Analysis; o: Orden; depth: 
               <div className="tree-meta">
                 <EstadoPill e={op.estado} raw={op.estadoRaw} />
                 <span className="small muted nowrap">
-                  {fmtDateTime(op.start)} → {fmtDateTime(op.end)}
+                  {fmtDateTime(opSpan(op)?.start)} → {fmtDateTime(opSpan(op)?.end)}
+                  {opSpan(op)?.real ? ' (real)' : ''}
                 </span>
               </div>
             </div>
@@ -350,6 +358,8 @@ export function FichaAparatoPage() {
   const [op, setOp] = useState<string>();
   const exp = useExport();
   const fa = useMemo(() => (a && selected ? analyzeAparato(a, selected) : undefined), [a, selected]);
+  const preNodes = useMemo(() => !!a && a.model.ordenes.size > 0 && [...a.model.ordenes.values()].every((o) => o.tipo === 'preorden'), [a]);
+  const ortemsOfAp = useMemo(() => (a && selected ? a.match.ortemsOnly.filter((rid) => (a.ortemsAparato.get(rid) ?? a.ortems.get(rid)?.aparatoId) === selected).length : 0), [a, selected]);
   if (!a) return <NoData />;
   return (
     <div className="page">
@@ -381,11 +391,15 @@ export function FichaAparatoPage() {
             <>
               <div className="grid grid-kpi">
                 <Kpi label="Estado global" value={<EstadoPill e={fa.aparato.estado} />} />
-                <Kpi label="Órdenes" value={fa.ordenes.length} sub={fa.ordenes.map((o) => o.preordenId).filter(Boolean).length ? `${fa.ordenes.filter((o) => o.preordenId).length} con preorden` : undefined} />
-                <Kpi label="Operaciones" value={fa.ops.length} />
-                <Kpi label="Puestos" value={fa.pasos.length} sub={fa.aparato.secciones.join(', ')} />
+                {preNodes ? (
+                  <Kpi label="Preórdenes con fichajes" value={fa.ordenes.length} sub={`${fa.ordenes.filter((o) => o.estado === 'terminada').length} terminadas`} />
+                ) : (
+                  <Kpi label="Órdenes" value={fa.ordenes.length} sub={fa.ordenes.map((o) => o.preordenId).filter(Boolean).length ? `${fa.ordenes.filter((o) => o.preordenId).length} con preorden` : undefined} />
+                )}
+                {preNodes ? <Kpi label="Planificadas en Ortems" value={ortemsOfAp} sub="registros sin fichajes todavía" /> : <Kpi label="Operaciones" value={fa.ops.length} />}
+                {a.model.has.puestos ? <Kpi label="Puestos" value={fa.pasos.length} sub={fa.aparato.secciones.join(', ')} /> : <Kpi label="Secciones" value={fa.aparato.secciones.length} sub={fa.aparato.secciones.join(', ')} />}
                 <Kpi label="Operaciones retrasadas" value={fa.delayed.length} state={fa.delayed.length ? 'crit' : undefined} />
-                <Kpi label="Fechas previstas" value={<span style={{ fontSize: 16 }}>{fmtDate(fa.aparato.start)} → {fmtDate(fa.aparato.end)}</span>} />
+                <Kpi label={a.model.has.previstas ? 'Fechas previstas' : 'Fechas reales (fichajes)'} value={<span style={{ fontSize: 16 }}>{fmtDate(fa.aparato.start)} → {fmtDate(fa.aparato.end)}</span>} />
               </div>
               {fa.incompleto.length > 0 && (
                 <Notice kind="warn">
@@ -397,7 +411,7 @@ export function FichaAparatoPage() {
                   </ul>
                 </Notice>
               )}
-              <Panel title="Secuencia de fabricación" sub="Operaciones ordenadas por inicio previsto" flush>
+              <Panel title="Secuencia de fabricación" sub={a.model.has.previstas ? 'Operaciones ordenadas por inicio previsto' : 'Ordenadas por inicio real (fichajes); las fechas reales se marcan con «(real)»'} flush>
                 <div className="table-wrap" style={{ maxHeight: 520 }}>
                   <table className="tbl">
                     <thead>
@@ -421,12 +435,15 @@ export function FichaAparatoPage() {
                         return (
                           <tr key={o.key} className="clickable" onClick={() => setOp(o.key)}>
                             <td className="id">{o.ordenId}</td>
-                            <td className="id">{o.label}</td>
+                            <td className="id">{o.operacionId !== undefined ? o.label : '—'}</td>
                             <td>{o.desc}</td>
                             <td className="id">{o.puestoId ?? '—'}</td>
                             <td>{o.seccion}</td>
-                            <td className="nowrap">{fmtDateTime(o.start)}</td>
-                            <td className="nowrap">{fmtDateTime(o.end)}</td>
+                            <td className="nowrap">
+                              {fmtDateTime(opSpan(o)?.start)}
+                              {opSpan(o)?.real ? <span className="small muted"> (real)</span> : null}
+                            </td>
+                            <td className="nowrap">{fmtDateTime(opSpan(o)?.end)}</td>
                             <td className="num">{fmtHours(a.opFlags.get(o.key)?.hours)}</td>
                             <td>
                               <EstadoPill e={o.estado} raw={o.estadoRaw} />

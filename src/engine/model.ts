@@ -31,11 +31,15 @@ export interface Operacion {
   articuloDesc?: string;
   familia?: string;
   preordenId?: string;
+  /** Fechas previstas (planificación). */
   start?: number;
   end?: number;
+  /** Fechas reales (p. ej. fichajes). Nunca se presentan como previstas. */
   realStart?: number;
   realEnd?: number;
   target?: number;
+  /** Avance declarado (0-100). */
+  avance?: number;
   /** Duración del Excel (horas). */
   durationH?: number;
   estado: EstadoCanonico;
@@ -54,7 +58,11 @@ export interface Operacion {
 }
 
 export interface Orden {
+  /** Identificador del nodo: número de orden o, si el Excel no tiene orden, número de preorden. */
   id: string;
+  tipo: 'orden' | 'preorden';
+  /** Número de orden de fabricación (solo si existe en el Excel). */
+  ordenId?: string;
   aparatoId?: string;
   aparatoLink: LinkStatus | 'sin_aparato';
   aparatoRule?: string;
@@ -65,14 +73,41 @@ export interface Orden {
   parentId?: string;
   parentLink?: LinkStatus;
   parentRule?: string;
+  /** La orden/preorden padre no está en producción pero sí está planificada en Ortems. */
+  parentExternal?: boolean;
   childIds: string[];
   opKeys: string[];
   start?: number;
   end?: number;
+  realStart?: number;
+  realEnd?: number;
   estado: EstadoCanonico;
   prioridad?: number;
   target?: number;
   rids: string[];
+}
+
+/** Nombre mostrable de un nodo del árbol («Orden 50001» o «Preorden 9000001»). */
+export function nodeName(o: Pick<Orden, 'id' | 'tipo'> | undefined, id?: string): string {
+  if (!o) return `Orden ${id ?? ''}`;
+  return `${o.tipo === 'preorden' ? 'Preorden' : 'Orden'} ${o.id}`;
+}
+
+/**
+ * Intervalo de una operación para representarla: fechas previstas si existen; si no, fechas reales.
+ * `real` indica que se trata de ejecución real (fichajes), no de planificación.
+ */
+export function opSpan(op: Pick<Operacion, 'start' | 'end' | 'realStart' | 'realEnd'>): { start: number; end: number; real: boolean } | undefined {
+  if (op.start !== undefined && op.end !== undefined) return { start: op.start, end: Math.max(op.end, op.start), real: false };
+  if (op.realStart !== undefined && op.realEnd !== undefined) return { start: op.realStart, end: Math.max(op.realEnd, op.realStart), real: true };
+  if (op.realEnd !== undefined && op.start === undefined) return { start: op.realEnd, end: op.realEnd, real: true };
+  return undefined;
+}
+
+/** Identificadores conocidos fuera de producción (p. ej. órdenes y preórdenes planificadas en Ortems). */
+export interface ExternalIds {
+  has(id: string): boolean;
+  source: string;
 }
 
 export interface Aparato {
@@ -148,6 +183,8 @@ export interface ProductionModel {
   records: Map<string, ProdRecord>;
   /** El Excel contiene identificadores de operación. */
   opLevel: boolean;
+  /** Qué tipo de información trae el Excel de producción (para no exigir lo que no contiene). */
+  has: { puestos: boolean; previstas: boolean; reales: boolean; duracion: boolean };
 }
 
 function aggregateEstado(states: EstadoCanonico[]): EstadoCanonico {
@@ -179,7 +216,7 @@ function mostFrequent(values: (string | undefined)[]): string | undefined {
   return best;
 }
 
-export function buildProductionModel(dataset: DatasetVersion | undefined, settings: Settings, manual: ManualRelation[] = []): ProductionModel {
+export function buildProductionModel(dataset: DatasetVersion | undefined, settings: Settings, manual: ManualRelation[] = [], external?: ExternalIds): ProductionModel {
   const records = new Map<string, ProdRecord>();
   const ops = new Map<string, Operacion>();
   const ordenes = new Map<string, Orden>();
@@ -188,23 +225,53 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
   const relations: Relation[] = [];
   const quality: QualityIssue[] = [];
   const masters: MasterRow[] = dataset?.masters ?? [];
-  const recs = ((dataset?.records ?? []) as ProdRecord[]).filter((r) => r.status !== 'rechazado' && r.ordenId);
+  const recs = ((dataset?.records ?? []) as ProdRecord[]).filter((r) => r.status !== 'rechazado' && (r.ordenId || r.preordenId));
   for (const r of recs) records.set(r.rid, r);
   const opLevel = recs.some((r) => r.operacionId);
+  const has = {
+    puestos: recs.some((r) => r.puestoId),
+    previstas: recs.some((r) => r.inicioPrevisto !== undefined || r.finPrevisto !== undefined),
+    reales: recs.some((r) => r.inicioReal !== undefined || r.finReal !== undefined),
+    duracion: recs.some((r) => r.duracionH !== undefined),
+  };
+  const estadoOf = (r: ProdRecord): EstadoCanonico => (r.estado && r.estado !== 'desconocido' ? r.estado : r.avance === 100 ? 'terminada' : r.estado ?? 'desconocido');
 
   // 1) Operaciones (una por clave orden+operación; los duplicados quedan trazados)
   const ordenRecs = new Map<string, ProdRecord[]>();
+  const allRecs = new Map<string, ProdRecord[]>();
+  const consolidated = (r: ProdRecord) => r.issues.some((i) => i.code === 'FILAS_CONSOLIDADAS');
   for (const r of recs) {
-    const ordenId = r.ordenId!;
-    const key = r.operacionId ? `${ordenId}|${r.operacionId}` : `${ordenId}|fila ${r.src.sheet}:${r.src.row}`;
+    const ordenId = (r.ordenId ?? r.preordenId)!;
+    const al = allRecs.get(ordenId) ?? [];
+    al.push(r);
+    allRecs.set(ordenId, al);
+    // Filas consolidadas sin operación: todas son avances de la misma preorden/orden
+    const key = r.operacionId ? `${ordenId}|${r.operacionId}` : consolidated(r) ? `${ordenId}|*` : `${ordenId}|fila ${r.src.sheet}:${r.src.row}`;
     const existing = ops.get(key);
+    if (existing && consolidated(r)) {
+      // Consolidación de avances: intervalo total, mayor avance y estado de la fila más reciente
+      existing.rids.push(r.rid);
+      const latest = (r.finReal ?? r.finPrevisto ?? -Infinity) >= (existing.realEnd ?? existing.end ?? -Infinity);
+      existing.start = minDef(existing.start, r.inicioPrevisto);
+      existing.end = maxDef(existing.end, r.finPrevisto);
+      existing.realStart = minDef(existing.realStart, r.inicioReal);
+      existing.realEnd = maxDef(existing.realEnd, r.finReal);
+      existing.avance = maxDef(existing.avance, r.avance);
+      existing.durationH ??= r.duracionH;
+      if (latest) {
+        existing.estado = estadoOf(r);
+        existing.estadoRaw = r.estadoRaw ?? existing.estadoRaw;
+      }
+      if (existing.avance === 100 && existing.estado === 'desconocido') existing.estado = 'terminada';
+      continue;
+    }
     if (existing) {
       existing.rids.push(r.rid);
       quality.push({
         id: `dup:${key}`,
         code: 'ID_DUPLICADO',
         severity: 'media',
-        message: `La operación ${r.operacionId} de la orden ${ordenId} aparece en varias filas (filas ${existing.src.row} y ${r.src.row}). Se usa la primera.`,
+        message: `La operación ${r.operacionId ?? existing.label} de ${r.ordenId ? 'la orden' : 'la preorden'} ${ordenId} aparece en varias filas (filas ${existing.src.row} y ${r.src.row}). Se usa la primera.`,
         ordenId,
         opKey: key,
         rids: [existing.rid, r.rid],
@@ -218,7 +285,7 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
       key,
       ordenId,
       operacionId: r.operacionId,
-      label: r.operacionId ?? `Fila ${r.src.row}`,
+      label: r.operacionId ?? (!r.ordenId && r.seccion ? r.seccion : `Fila ${r.src.row}`),
       seq: r.secuencia,
       desc: r.operacionDesc,
       puestoId: r.puestoId,
@@ -236,8 +303,9 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
       realStart: r.inicioReal,
       realEnd: r.finReal,
       target: r.fechaObjetivo,
+      avance: r.avance,
       durationH: r.duracionH,
-      estado: r.estado ?? 'desconocido',
+      estado: estadoOf(r),
       estadoRaw: r.estadoRaw,
       prioridad: r.prioridad,
       prioridadRaw: r.prioridadRaw,
@@ -253,11 +321,16 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
   }
 
   // 2) Órdenes
-  for (const [ordenId, list] of ordenRecs) {
+  for (const [ordenId, firstRecs] of ordenRecs) {
+    // incluye las filas consolidadas: un padre distinto en otra fila es una ambigüedad real
+    const list = allRecs.get(ordenId) ?? firstRecs;
     const aparatoIds = distinct(list.map((r) => r.aparatoId));
     const parentIds = distinct(list.map((r) => r.ordenPadreId));
+    const tipo: Orden['tipo'] = list.some((r) => r.ordenId) ? 'orden' : 'preorden';
     const o: Orden = {
       id: ordenId,
+      tipo,
+      ordenId: tipo === 'orden' ? ordenId : undefined,
       aparatoLink: 'sin_aparato',
       preordenId: distinct(list.map((r) => r.preordenId))[0],
       articuloRef: mostFrequent(list.map((r) => r.articuloRef)),
@@ -281,7 +354,7 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
         id: `amb-ap:${ordenId}`,
         code: 'RELACION_AMBIGUA',
         severity: 'alta',
-        message: `La orden ${ordenId} está asociada a varios aparatos (${aparatoIds.join(', ')}). Requiere validación manual.`,
+        message: `${nodeName(o)} está asociada a varios aparatos (${aparatoIds.join(', ')}). Requiere validación manual.`,
         ordenId,
         rids: o.rids,
       });
@@ -289,16 +362,17 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
     if (parentIds.length === 1) {
       o.parentId = parentIds[0];
       o.parentLink = 'confirmada';
-      o.parentRule = 'Campo «Orden padre» del Excel';
+      o.parentRule = tipo === 'preorden' ? 'Campo «Preorden siguiente» del Excel' : 'Campo «Orden padre» del Excel';
     } else if (parentIds.length > 1) {
       o.parentLink = 'pendiente';
-      o.parentRule = `Ambigua: varias órdenes padre (${parentIds.join(', ')})`;
+      o.parentRule = `Ambigua: el Excel indica ${parentIds.length} ${tipo === 'preorden' ? 'preórdenes siguientes' : 'órdenes padre'} distintas (${parentIds.join(', ')})`;
       quality.push({
         id: `amb-pa:${ordenId}`,
         code: 'RELACION_AMBIGUA',
         severity: 'media',
-        message: `La orden ${ordenId} indica varias órdenes padre (${parentIds.join(', ')}).`,
+        message: `${nodeName(o)} indica varios padres/siguientes distintos en distintas filas (${parentIds.join(', ')}). Requiere validación.`,
         ordenId,
+        aparatoId: o.aparatoId,
         rids: o.rids,
       });
     }
@@ -353,16 +427,23 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
     if (!o.parentId) continue;
     const parent = ordenes.get(o.parentId);
     if (!parent) {
+      const what = o.tipo === 'preorden' ? 'su preorden siguiente' : 'como padre la orden';
+      if (external?.has(o.parentId)) {
+        // relación declarada en el Excel; el padre aún no está en producción pero sí planificado en Ortems
+        o.parentExternal = true;
+        relations.push({ id: `rel-pa:${o.id}`, kind: 'orden-padre', from: o.id, to: o.parentId, status: o.parentLink ?? 'confirmada', regla: o.parentRule ?? '', detail: `${nodeName(o)} → ${o.parentId} (planificada en ${external.source}, todavía sin datos en producción)`, aparatoId: o.aparatoId });
+        continue;
+      }
       quality.push({
         id: `pnf:${o.id}`,
         code: 'PADRE_NO_ENCONTRADO',
-        severity: 'media',
-        message: `La orden ${o.id} indica como padre la orden ${o.parentId}, que no está en los datos importados.`,
+        severity: 'informativa',
+        message: `${nodeName(o)} indica ${what} ${o.parentId}, que no está ni en producción ni en Ortems.`,
         ordenId: o.id,
         aparatoId: o.aparatoId,
         rids: o.rids,
       });
-      relations.push({ id: `rel-pa:${o.id}`, kind: 'orden-padre', from: o.id, to: o.parentId, status: 'pendiente', regla: o.parentRule ?? '', detail: 'Orden padre no encontrada en los datos', aparatoId: o.aparatoId });
+      relations.push({ id: `rel-pa:${o.id}`, kind: 'orden-padre', from: o.id, to: o.parentId, status: 'pendiente', regla: o.parentRule ?? '', detail: `${o.parentId} no encontrada en los datos importados`, aparatoId: o.aparatoId });
       continue;
     }
     parent.childIds.push(o.id);
@@ -418,6 +499,8 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
     const list = o.opKeys.map((k) => ops.get(k)!);
     o.start = list.reduce<number | undefined>((a, x) => minDef(a, x.start), undefined);
     o.end = list.reduce<number | undefined>((a, x) => maxDef(a, x.end), undefined);
+    o.realStart = list.reduce<number | undefined>((a, x) => minDef(a, x.realStart), undefined);
+    o.realEnd = list.reduce<number | undefined>((a, x) => maxDef(a, x.realEnd), undefined);
     o.estado = aggregateEstado(list.map((x) => x.estado));
     for (const op of list) {
       // la operación hereda el aparato de su orden (incluido el inferido), sin tocar el registro original
@@ -430,14 +513,14 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
       to: o.aparatoId,
       status: o.aparatoLink === 'sin_aparato' ? 'pendiente' : o.aparatoLink,
       regla: o.aparatoRule ?? 'Sin dato de aparato',
-      detail: o.aparatoId ? `Orden ${o.id} → aparato ${o.aparatoId}` : `La orden ${o.id} no tiene aparato asociado`,
+      detail: o.aparatoId ? `${nodeName(o)} → aparato ${o.aparatoId}` : `${nodeName(o)} no tiene aparato asociado`,
       aparatoId: o.aparatoId,
     });
     if (o.parentId && ordenes.has(o.parentId)) {
-      relations.push({ id: `rel-pa:${o.id}`, kind: 'orden-padre', from: o.id, to: o.parentId, status: o.parentLink ?? 'confirmada', regla: o.parentRule ?? '', detail: `Orden ${o.id} → orden padre ${o.parentId}`, aparatoId: o.aparatoId });
+      relations.push({ id: `rel-pa:${o.id}`, kind: 'orden-padre', from: o.id, to: o.parentId, status: o.parentLink ?? 'confirmada', regla: o.parentRule ?? '', detail: `${nodeName(o)} → ${nodeName(ordenes.get(o.parentId))}`, aparatoId: o.aparatoId });
     }
     if (!o.aparatoId) {
-      quality.push({ id: `nap:${o.id}`, code: 'ORDEN_SIN_APARATO', severity: 'media', message: `La orden ${o.id} no tiene aparato asociado y no se ha podido inferir.`, ordenId: o.id, rids: o.rids });
+      quality.push({ id: `nap:${o.id}`, code: 'ORDEN_SIN_APARATO', severity: 'media', message: `${nodeName(o)} no tiene aparato asociado y no se ha podido inferir.`, ordenId: o.id, rids: o.rids });
     }
   }
 
@@ -498,12 +581,15 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
     a.familia ??= mostFrequent(ords.map((o) => o.familia));
     a.secciones = distinct(aops.map((op) => op.seccion)).sort(naturalCompare);
     a.puestos = distinct(aops.map((op) => op.puestoId)).sort(naturalCompare);
-    a.start = ords.reduce<number | undefined>((x, o) => minDef(x, o.start), undefined);
-    a.end = ords.reduce<number | undefined>((x, o) => maxDef(x, o.end), undefined);
+    a.start = ords.reduce<number | undefined>((x, o) => minDef(x, o.start ?? o.realStart), undefined);
+    a.end = ords.reduce<number | undefined>((x, o) => maxDef(x, o.end ?? o.realEnd), undefined);
     a.estado = aggregateEstado(ords.map((o) => o.estado));
     a.ordenIds.sort(naturalCompare);
-    if (a.rootOrdenIds.length > 1) {
-      for (const rid of a.rootOrdenIds) {
+    // Solo cuentan como «sin relación» las raíces que no declaran padre: si lo declaran (aunque el padre
+    // esté fuera de los datos o planificado en Ortems), la relación es conocida.
+    const undeclared = a.rootOrdenIds.filter((r) => !ordenes.get(r)!.parentId);
+    if (undeclared.length > 1) {
+      for (const rid of undeclared) {
         const o = ordenes.get(rid)!;
         if (o.parentLink === 'manual') continue;
         relations.push({
@@ -512,11 +598,11 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
           from: rid,
           status: 'pendiente',
           regla: 'Sin dato de orden padre',
-          detail: `La orden ${rid} no tiene relación jerárquica conocida con las demás órdenes del aparato ${a.id}.`,
+          detail: `${nodeName(o)} no tiene relación jerárquica conocida con las demás órdenes del aparato ${a.id}.`,
           aparatoId: a.id,
         });
       }
-      const pend = a.rootOrdenIds.filter((r) => ordenes.get(r)?.parentLink !== 'manual');
+      const pend = undeclared.filter((r) => ordenes.get(r)?.parentLink !== 'manual');
       if (pend.length > 1) {
         quality.push({
           id: `nrel:${a.id}`,
@@ -535,20 +621,21 @@ export function buildProductionModel(dataset: DatasetVersion | undefined, settin
 
   // 10) Calidad de operaciones
   for (const op of ops.values()) {
-    if (!op.puestoId) {
+    // solo se exige lo que el Excel contiene: un fichero sin puestos no genera una alerta por operación
+    if (!op.puestoId && has.puestos) {
       quality.push({ id: `nps:${op.key}`, code: 'OPERACION_SIN_PUESTO', severity: 'alta', message: `La operación ${op.label} de la orden ${op.ordenId} no tiene puesto de trabajo.`, aparatoId: op.aparatoId, ordenId: op.ordenId, opKey: op.key, rids: op.rids });
     }
-    if (op.start === undefined || op.end === undefined) {
-      quality.push({ id: `nfe:${op.key}`, code: 'OPERACION_SIN_FECHAS', severity: 'media', message: `La operación ${op.label} de la orden ${op.ordenId} no tiene fechas previstas completas: no aparece en el Gantt ni en la carga por periodo.`, aparatoId: op.aparatoId, ordenId: op.ordenId, opKey: op.key, puestoId: op.puestoId, rids: op.rids });
+    if (!opSpan(op)) {
+      quality.push({ id: `nfe:${op.key}`, code: 'OPERACION_SIN_FECHAS', severity: 'media', message: `La operación ${op.label} de ${op.ordenId} no tiene fechas completas (ni previstas ni reales): no aparece en el Gantt ni en la carga por periodo.`, aparatoId: op.aparatoId, ordenId: op.ordenId, opKey: op.key, puestoId: op.puestoId, rids: op.rids });
     }
-    if (op.durationH === undefined) {
+    if (op.durationH === undefined && has.duracion) {
       quality.push({ id: `ndu:${op.key}`, code: 'OPERACION_SIN_DURACION', severity: 'informativa', message: `La operación ${op.label} de la orden ${op.ordenId} no tiene duración prevista en el Excel${settings.load.estimateDurationFromDates ? '; la carga se estima a partir de las fechas' : ''}.`, aparatoId: op.aparatoId, ordenId: op.ordenId, opKey: op.key, puestoId: op.puestoId, rids: op.rids });
     }
   }
 
   const secciones = distinct([...puestos.values()].map((p) => p.seccion).concat([...ops.values()].map((o) => o.seccion))).sort(naturalCompare);
   const familias = distinct([...aparatos.values()].map((a) => a.familia).concat([...ordenes.values()].map((o) => o.familia))).sort(naturalCompare);
-  return { aparatos, ordenes, ops, puestos, secciones, familias, relations, quality, records, opLevel };
+  return { aparatos, ordenes, ops, puestos, secciones, familias, relations, quality, records, opLevel, has };
 }
 
 /** Ordena las operaciones de una orden en grupos de secuencia (las del mismo grupo son paralelas). */

@@ -120,6 +120,21 @@ export function ConfiguracionPage() {
               <label htmlFor="c-keep">Versiones completas conservadas por fuente</label>
               <input id="c-keep" type="number" min={2} max={50} className="input" value={d.keepVersions} onChange={(e) => upd({ keepVersions: Math.max(2, Number(e.target.value) || 2) })} disabled={!canAll} />
             </div>
+            <div className="field">
+              <label htmlFor="c-base">Planificación base del análisis futuro</label>
+              <select id="c-base" className="input" value={d.load.base} onChange={(e) => upd({ load: { ...d.load, base: e.target.value as Settings['load']['base'] } })} disabled={!canCap}>
+                <option value="auto">Automática (Ortems si producción solo trae ejecución real)</option>
+                <option value="produccion">Producción</option>
+                <option value="ortems">Ortems</option>
+                <option value="combinada">Producción + solo-Ortems</option>
+              </select>
+              <span className="small muted">Carga, cuellos de botella y cuadro de mando se calculan sobre esta planificación.</span>
+            </div>
+            <div className="field">
+              <label htmlFor="c-dem">Semanas de historial para la capacidad demostrada</label>
+              <input id="c-dem" type="number" min={2} max={52} className="input" value={d.load.demonstratedWeeks} onChange={(e) => upd({ load: { ...d.load, demonstratedWeeks: Math.min(52, Math.max(2, Number(e.target.value) || 8)) } })} disabled={!canCap} />
+              <span className="small muted">Horas ejecutadas por sección según los fichajes. Siempre se presenta como estimación.</span>
+            </div>
           </div>
           <label className="check" style={{ marginTop: 10 }}>
             <input type="checkbox" checked={d.load.estimateDurationFromDates} onChange={(e) => upd({ load: { ...d.load, estimateDurationFromDates: e.target.checked } })} disabled={!canCap} />
@@ -302,6 +317,15 @@ export function ConfiguracionPage() {
               <input type="checkbox" checked={d.matching.stripLeadingZeros} disabled={!canAll} onChange={(e) => upd({ matching: { ...d.matching, stripLeadingZeros: e.target.checked } })} />
               Ignorar ceros a la izquierda al emparejar (los identificadores originales no se modifican)
             </label>
+            <div className="field" style={{ maxWidth: 520 }}>
+              <label htmlFor="c-apk">Comparación del número de aparato entre ambos Excel</label>
+              <select id="c-apk" className="input" value={d.matching.aparatoKey} disabled={!canAll} onChange={(e) => upd({ matching: { ...d.matching, aparatoKey: e.target.value as Settings['matching']['aparatoKey'] } })}>
+                <option value="solo_digitos">Solo dígitos, sin ceros a la izquierda (p. ej. «V0012345» = «12345»)</option>
+                <option value="sin_ceros">Sin ceros a la izquierda</option>
+                <option value="exacto">Exacta</option>
+              </select>
+              <span className="small muted">Solo se usa para situar en su aparato los registros de Ortems sin correspondencia; si dos aparatos de producción coinciden con la misma clave, no se asigna.</span>
+            </div>
           </div>
         </Panel>
         <Panel title="Tolerancia y criticidad">

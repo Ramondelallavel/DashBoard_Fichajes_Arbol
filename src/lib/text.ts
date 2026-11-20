@@ -43,8 +43,10 @@ export function idKey(id: string | undefined, norm: IdNormalization): string | u
 }
 
 /** Comparación "natural" de identificadores: 0010 < 0020 < 0100, A2 < A10. */
+// Un único Collator: localeCompare con opciones crea uno nuevo en cada llamada (muy lento con 100 000 registros)
+const NATURAL = new Intl.Collator('es', { numeric: true, sensitivity: 'base' });
 export function naturalCompare(a: string, b: string): number {
-  return a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' });
+  return NATURAL.compare(a, b);
 }
 
 /** Hash FNV-1a de 32 bits en hexadecimal, para identificadores estables de alertas. */

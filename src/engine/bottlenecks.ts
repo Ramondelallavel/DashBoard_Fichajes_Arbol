@@ -82,7 +82,7 @@ function confianzaOf(cell: LoadCell, capSource: ResourceLoad['capSource']): Conf
   return 'estimado';
 }
 
-export function computeBottlenecks(load: LoadResult, overlaps: OverlapGroup[], settings: Settings, refMs: number, model: ProductionModel): BottleneckResult {
+export function computeBottlenecks(load: LoadResult, overlaps: OverlapGroup[], settings: Settings, refMs: number, model: ProductionModel, aparatosOverride?: Map<string, Set<string>>): BottleneckResult {
   const refWeekStart = (() => {
     const d = startOfDay(refMs);
     const wd = new Date(d).getDay() || 7;
@@ -134,13 +134,14 @@ export function computeBottlenecks(load: LoadResult, overlaps: OverlapGroup[], s
   for (const sl of load.secciones.values()) scan(sl, 'seccion', 'semana');
 
   const conflicts = overlaps.filter((g) => g.clase !== 'solape_dentro_capacidad');
-  const aparatosByPuesto = new Map<string, Set<string>>();
+  let aparatosByPuesto = new Map<string, Set<string>>();
   for (const op of model.ops.values()) {
     if (!op.puestoId || !op.aparatoId) continue;
     const s = aparatosByPuesto.get(op.puestoId) ?? new Set();
     s.add(op.aparatoId);
     aparatosByPuesto.set(op.puestoId, s);
   }
+  if (aparatosOverride) aparatosByPuesto = aparatosOverride;
 
   const rank = (rl: ResourceLoad, scope: 'puesto' | 'seccion'): ResourceRanking => {
     const weeks = [...rl.buckets.semana.values()];

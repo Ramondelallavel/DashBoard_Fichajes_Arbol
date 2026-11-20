@@ -66,7 +66,8 @@ export function matchSources(model: ProductionModel, ortems: OrtemsRecord[], set
       }
     } else {
       for (const o of model.ordenes.values()) {
-        const vals = rule.fields.map((f) => (f === 'ordenId' ? o.id : f === 'preordenId' ? o.preordenId : f === 'aparatoId' ? o.aparatoId : f === 'articuloRef' ? o.articuloRef : undefined));
+        // ordenId = número de orden real (no el de una preorden usada como nodo del árbol)
+        const vals = rule.fields.map((f) => (f === 'ordenId' ? o.ordenId : f === 'preordenId' ? o.preordenId : f === 'aparatoId' ? o.aparatoId : f === 'articuloRef' ? o.articuloRef : undefined));
         const k = compose(vals, norm);
         if (k === undefined) continue;
         const l = idx.get(k) ?? [];
@@ -120,10 +121,10 @@ export function matchSources(model: ProductionModel, ortems: OrtemsRecord[], set
   return res;
 }
 
-function fieldOfOp(f: string, op: { ordenId: string; operacionId?: string; puestoId?: string; aparatoId?: string; articuloRef?: string; preordenId?: string }, ord?: { preordenId?: string; aparatoId?: string; articuloRef?: string }): string | undefined {
+function fieldOfOp(f: string, op: { ordenId: string; operacionId?: string; puestoId?: string; aparatoId?: string; articuloRef?: string; preordenId?: string }, ord?: { ordenId?: string; preordenId?: string; aparatoId?: string; articuloRef?: string }): string | undefined {
   switch (f) {
     case 'ordenId':
-      return op.ordenId;
+      return ord?.ordenId;
     case 'operacionId':
       return op.operacionId;
     case 'puestoId':

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { naturalCompare } from '../../lib/text';
 
 export interface Column<T> {
   id: string;
@@ -30,21 +31,27 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, h
   const [sort, setSort] = useState<{ id: string; dir: 1 | -1 } | undefined>(initialSort);
   const [scrollTop, setScrollTop] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  // Las columnas suelen recrearse en cada render: el orden solo se recalcula si cambian las filas o el criterio
+  const colsRef = useRef(columns);
+  colsRef.current = columns;
   const sorted = useMemo(() => {
     if (!sort) return rows;
-    const col = columns.find((c) => c.id === sort.id);
+    const col = colsRef.current.find((c) => c.id === sort.id);
     if (!col?.sort) return rows;
     const get = col.sort;
-    return [...rows].sort((a, b) => {
-      const va = get(a);
-      const vb = get(b);
-      if (va === undefined && vb === undefined) return 0;
+    // decorar-ordenar-desdecorar: la clave de cada fila se calcula una sola vez
+    const keyed = rows.map((r, i) => ({ r, i, v: get(r) }));
+    keyed.sort((a, b) => {
+      const va = a.v;
+      const vb = b.v;
+      if (va === undefined && vb === undefined) return a.i - b.i;
       if (va === undefined) return 1;
       if (vb === undefined) return -1;
-      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sort.dir;
-      return String(va).localeCompare(String(vb), 'es', { numeric: true }) * sort.dir;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sort.dir || a.i - b.i;
+      return naturalCompare(String(va), String(vb)) * sort.dir || a.i - b.i;
     });
-  }, [rows, sort, columns]);
+    return keyed.map((k) => k.r);
+  }, [rows, sort]);
   const template = columns.map((c) => c.width).join(' ');
   const headH = 34;
   const total = sorted.length * rowHeight;

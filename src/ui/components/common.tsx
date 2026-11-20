@@ -68,9 +68,10 @@ const ESTADO_CLS: Record<EstadoCanonico, string> = {
   en_curso: 'pill-info',
   terminada: 'pill-good',
   bloqueada: 'pill-crit',
+  anulada: 'pill-neutral',
   desconocido: 'pill-outline',
 };
-const ESTADO_G: Record<EstadoCanonico, string> = { pendiente: '○', en_curso: '◐', terminada: '●', bloqueada: '■', desconocido: '?' };
+const ESTADO_G: Record<EstadoCanonico, string> = { pendiente: '○', en_curso: '◐', terminada: '●', bloqueada: '■', anulada: '✕', desconocido: '?' };
 
 export function EstadoPill({ e, raw }: { e: EstadoCanonico; raw?: string }) {
   return (

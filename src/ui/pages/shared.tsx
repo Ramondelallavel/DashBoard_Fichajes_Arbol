@@ -23,20 +23,29 @@ export function FiltersRow({ onFilters }: { onFilters?: () => void }) {
   return <ActiveFilters onOpen={onFilters} />;
 }
 
-/** Carga recalculada solo con las operaciones visibles por el filtro (los indicadores reaccionan a los filtros). */
-export function useFilteredLoad(a: Analysis | undefined, filtered: FilterResult | undefined): LoadResult | undefined {
+/**
+ * Carga recalculada solo con lo visible por el filtro (los indicadores reaccionan a los filtros).
+ * `base`: planificación sobre la que se calcula (por defecto, la base del análisis).
+ */
+export function useFilteredLoad(a: Analysis | undefined, filtered: FilterResult | undefined, base?: 'produccion' | 'ortems' | 'combinada'): LoadResult | undefined {
   return useMemo(() => {
     if (!a) return undefined;
-    if (!filtered?.active) return a.load.produccion;
-    const items: LoadItem[] = [];
-    for (const k of filtered.ops) {
-      const op = a.model.ops.get(k)!;
-      const f = a.opFlags.get(k);
-      items.push({ id: k, puestoId: op.puestoId, seccion: op.seccion, ordenId: op.ordenId, start: op.start, end: op.end, hours: f?.hours, estimated: !!f?.durEstimada, source: 'produccion' });
-    }
-    return computeLoad(items, a.calendar, 'produccion', new Map([...a.model.puestos.values()].map((p) => [p.id, p.seccion])));
-  }, [a, filtered]);
+    const b = base ?? a.loadBase;
+    if (!filtered?.active) return a.load[b];
+    const inSel = (it: LoadItem) => {
+      if (it.source === 'produccion') return filtered.ops.has(it.id);
+      if (filtered.ortemsOnly.has(it.id)) return true;
+      const m = a.match.matches.get(it.id);
+      if (!m) return false;
+      return m.level === 'operacion' ? filtered.ops.has(m.target) : filtered.ordenes.has(m.target);
+    };
+    const onlyOrt = new Set(a.match.ortemsOnly);
+    const pool = b === 'produccion' ? a.loadItems.produccion : b === 'ortems' ? a.loadItems.ortems : [...a.loadItems.produccion.filter((i) => !i.real), ...a.loadItems.ortems.filter((i) => onlyOrt.has(i.id))];
+    return computeLoad(pool.filter(inSel), a.calendar, b, a.puestoSeccion);
+  }, [a, filtered, base]);
 }
+
+export const BASE_LABEL = { produccion: 'producción', ortems: 'Ortems', combinada: 'producción + solo-Ortems' } as const;
 
 export function weekOptions(load: LoadResult | undefined, refMs: number): { key: string; label: string }[] {
   const keys = new Set<string>([weekKey(refMs)]);

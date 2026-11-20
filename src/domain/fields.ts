@@ -26,7 +26,7 @@ const F = (key: string, label: string, type: FieldType, description: string, syn
 export const PROD_FIELDS: FieldDef[] = [
   F('aparatoId', 'Número de aparato', 'id', 'Identificador del aparato (entidad principal).', [
     'n aparato', 'num aparato', 'numero aparato', 'aparato', 'cod aparato', 'id aparato', 'equipo', 'n equipo', 'num equipo', 'n serie', 'numero de serie', 'aparato principal',
-  ]),
+    'ped codcontrol', 'cod control', 'codcontrol', 'ncontrol', 'n control', 'control pedido']),
   F('articuloRef', 'Referencia de artículo', 'id', 'Código/referencia del artículo fabricado.', [
     'referencia', 'ref', 'ref articulo', 'articulo', 'cod articulo', 'codigo articulo', 'material', 'cod material', 'item', 'producto', 'referencia articulo',
   ]),
@@ -37,10 +37,10 @@ export const PROD_FIELDS: FieldDef[] = [
   F('ordenId', 'Número de orden', 'id', 'Orden de fabricación (OF).', [
     'n orden', 'num orden', 'numero orden', 'orden', 'of', 'n of', 'orden fabricacion', 'orden de fabricacion', 'ot', 'n ot', 'orden trabajo', 'work order', 'wo',
   ]),
-  F('preordenId', 'Número de preorden', 'id', 'Preorden asociada a la orden (si existe).', ['preorden', 'n preorden', 'num preorden', 'pre orden', 'orden prevista', 'orden planificada', 'opl']),
+  F('preordenId', 'Número de preorden', 'id', 'Preorden asociada a la orden (si existe).', ['preorden', 'n preorden', 'num preorden', 'pre orden', 'orden prevista', 'orden planificada', 'opl', 'preo codigo', 'preo', 'cod preorden', 'codigo preorden']),
   F('ordenPadreId', 'Orden padre', 'id', 'Orden de nivel superior (estructura). Si existe, la relación se considera confirmada.', [
     'orden padre', 'of padre', 'n orden padre', 'orden superior', 'padre', 'orden nivel superior', 'orden montaje',
-  ]),
+    'preordsiguiente', 'preord siguiente', 'preorden siguiente', 'siguiente', 'orden siguiente']),
   F('operacionId', 'Identificador de operación', 'id', 'Número/código de operación o fase dentro de la orden.', [
     'operacion', 'op', 'n operacion', 'num operacion', 'cod operacion', 'fase', 'n fase', 'paso', 'secuencia operacion', 'n op',
   ]),
@@ -55,7 +55,7 @@ export const PROD_FIELDS: FieldDef[] = [
     'puesto', 'puesto trabajo', 'puesto de trabajo', 'puesto trab', 'pt', 'recurso', 'maquina', 'cod puesto', 'n puesto', 'work center', 'workcenter', 'centro de coste',
   ]),
   F('puestoDesc', 'Descripción del puesto', 'text', 'Nombre del puesto de trabajo.', ['descripcion puesto', 'desc puesto', 'nombre puesto', 'denominacion puesto', 'nombre recurso', 'denominacion', 'nombre']),
-  F('seccion', 'Sección', 'text', 'Sección productiva.', ['seccion', 'departamento', 'taller', 'nave', 'linea']),
+  F('seccion', 'Sección', 'text', 'Sección productiva.', ['seccion', 'departamento', 'taller', 'nave', 'linea', 'secc nombre', 'nombre seccion', 'sccnombre', 'scc nombre']),
   F('area', 'Área de producción', 'text', 'Área de producción.', ['area', 'area produccion', 'zona', 'area de produccion']),
   F('centroTrabajo', 'Centro de trabajo', 'text', 'Centro de trabajo / planta.', ['centro', 'centro trabajo', 'centro de trabajo', 'planta', 'fabrica', 'site']),
   F('inicioPrevisto', 'Fecha prevista de inicio', 'date', 'Inicio planificado internamente.', [
@@ -69,28 +69,33 @@ export const PROD_FIELDS: FieldDef[] = [
   F('fechaObjetivo', 'Fecha objetivo', 'date', 'Fecha comprometida / de entrega.', ['fecha objetivo', 'f objetivo', 'fecha entrega', 'f entrega', 'fecha compromiso', 'due date', 'fecha necesidad']),
   F('duracion', 'Duración prevista', 'duration', 'Tiempo de trabajo previsto de la operación (horas/minutos según opción).', [
     'tiempo h', 'tiempo', 'duracion', 'horas', 'horas previstas', 'tiempo previsto', 'tiempo operacion', 'carga', 'carga h', 'horas estandar', 'tiempo estandar', 'duracion h',
-  ]),
+    'preo cargatotal h', 'cargatotal h', 'carga total', 'carga total h']),
   F('cantidad', 'Cantidad', 'number', 'Cantidad a fabricar.', ['cantidad', 'cant', 'uds', 'unidades', 'qty', 'cantidad prevista', 'cantidad orden']),
-  F('estado', 'Estado de fabricación', 'state', 'Estado de la orden/operación.', ['estado', 'situacion', 'status', 'estado op', 'estado orden', 'estado fabricacion']),
+  F('avance', 'Porcentaje de avance', 'number', 'Avance declarado (0-100). 100 % se interpreta como terminada si no hay estado.', ['porcentaje', 'avance', 'porcentaje avance', '% avance', 'pct']),
+  F('estado', 'Estado de fabricación', 'state', 'Estado de la orden/operación.', ['estado', 'situacion', 'status', 'estado op', 'estado orden', 'estado fabricacion', 'estado preo', 'estado preorden']),
   F('prioridad', 'Prioridad interna', 'priority', 'Prioridad en la planificación interna (si existe).', ['prioridad', 'prio', 'urgencia', 'prioridad interna']),
 ];
 
 export const ORTEMS_FIELDS: FieldDef[] = [
-  F('ordenId', 'Identificador de orden', 'id', 'Orden de fabricación según Ortems.', ['of', 'orden', 'n orden', 'num orden', 'numero orden', 'orden fabricacion', 'n of', 'ordre', 'of ortems']),
-  F('preordenId', 'Identificador de preorden', 'id', 'Preorden (orden aún no lanzada).', ['preorden', 'n preorden', 'pre orden', 'orden prevista', 'preordre', 'propuesta']),
-  F('aparatoId', 'Número de aparato', 'id', 'Aparato, si Ortems lo proporciona.', ['aparato', 'n aparato', 'num aparato', 'equipo', 'n serie']),
-  F('articuloRef', 'Referencia de artículo', 'id', 'Artículo, si Ortems lo proporciona.', ['articulo', 'referencia', 'ref', 'cod articulo', 'material', 'article']),
+  F('ordenId', 'Identificador de orden', 'id', 'Orden de fabricación según Ortems.', ['of', 'orden', 'n orden', 'num orden', 'numero orden', 'orden fabricacion', 'n of', 'ordre', 'of ortems', 'ord', 'ord codigo']),
+  F('preordenId', 'Identificador de preorden', 'id', 'Preorden (orden aún no lanzada).', ['preorden', 'n preorden', 'pre orden', 'orden prevista', 'preordre', 'propuesta', 'preo', 'preo codigo']),
+  F('aparatoId', 'Número de aparato', 'id', 'Aparato, si Ortems lo proporciona.', ['aparato', 'n aparato', 'num aparato', 'equipo', 'n serie', 'ncontrol', 'n control', 'ped codcontrol', 'codcontrol']),
+  F('articuloRef', 'Referencia de artículo', 'id', 'Artículo, si Ortems lo proporciona.', ['articulo', 'referencia', 'ref', 'cod articulo', 'material', 'article', 'tgt', 'cod tgt']),
   F('operacionId', 'Operación / fase', 'id', 'Operación o fase planificada.', ['operacion', 'fase', 'op', 'n operacion', 'n fase', 'phase', 'operation']),
-  F('puestoId', 'Puesto / recurso asignado', 'id', 'Recurso asignado por Ortems.', ['recurso', 'puesto', 'puesto trabajo', 'maquina', 'ressource', 'resource', 'pt', 'puesto trab']),
+  F('puestoId', 'Puesto / recurso asignado', 'id', 'Recurso asignado por Ortems.', ['recurso', 'puesto', 'puesto trabajo', 'maquina', 'ressource', 'resource', 'pt', 'puesto trab', 'puesto ortems']),
   F('prioridad', 'Prioridad de planificación', 'priority', 'Prioridad asignada por Ortems.', ['prioridad', 'prio', 'priorite', 'priority', 'prioridad ortems', 'nivel prioridad']),
   F('inicio', 'Fecha prevista de inicio (Ortems)', 'date', 'Inicio planificado por Ortems.', [
     'inicio planificado', 'fecha inicio', 'inicio', 'debut', 'f inicio', 'inicio ortems', 'fecha inicio planificada', 'start', 'comienzo',
-  ]),
-  F('fin', 'Fecha prevista de finalización (Ortems)', 'date', 'Fin planificado por Ortems.', ['fin planificado', 'fecha fin', 'fin', 'f fin', 'fin ortems', 'fecha fin planificada', 'end', 'finalizacion']),
-  F('periodo', 'Periodo previsto', 'text', 'Periodo de ejecución textual (p. ej. semana), se conserva tal cual.', ['periodo', 'semana', 'periodo ejecucion', 'semana plan', 'periode']),
-  F('duracion', 'Duración (Ortems)', 'duration', 'Duración planificada por Ortems.', ['duracion', 'tiempo', 'horas', 'duree', 'carga']),
-  F('cantidad', 'Cantidad prevista', 'number', 'Cantidad planificada.', ['cantidad', 'cant', 'qty', 'quantite', 'cantidad prevista', 'uds']),
-  F('estadoPlanificacion', 'Estado de planificación', 'text', 'Estado de la planificación en Ortems.', ['estado', 'estado plan', 'estado planificacion', 'etat', 'status', 'situacion']),
+    'inicioortems', 'inicio ortems']),
+  F('fin', 'Fecha prevista de finalización (Ortems)', 'date', 'Fin planificado por Ortems.', ['fin planificado', 'fecha fin', 'fin', 'f fin', 'fin ortems', 'fecha fin planificada', 'end', 'finalizacion', 'finortems', 'fin ortems']),
+  F('periodo', 'Periodo previsto', 'text', 'Periodo de ejecución textual (p. ej. semana), se conserva tal cual.', ['periodo', 'semana', 'periodo ejecucion', 'semana plan', 'periode', 'sem']),
+  F('duracion', 'Duración (Ortems)', 'duration', 'Duración planificada por Ortems.', ['duracion', 'tiempo', 'horas', 'duree', 'carga', 'carga h']),
+  F('cantidad', 'Cantidad prevista', 'number', 'Cantidad planificada.', ['cantidad', 'cant', 'qty', 'quantite', 'cantidad prevista', 'uds', 'ord cantidad']),
+  F('articuloDesc', 'Descripción del artículo', 'text', 'Texto del artículo planificado.', ['tgtnombre', 'tgt nombre', 'descripcion', 'denominacion', 'nombre articulo']),
+  F('seccion', 'Sección', 'text', 'Sección del recurso o de la orden planificada.', ['sccnombre', 'scc nombre', 'seccion', 'nombre seccion', 'secc nombre']),
+  F('familia', 'Familia / línea de producto', 'text', 'Familia o línea de producto del aparato.', ['familia', 'linea producto', 'cp']),
+  F('modelo', 'Modelo', 'text', 'Modelo del aparato.', ['modelo', 'mod']),
+  F('estadoPlanificacion', 'Estado de planificación', 'text', 'Estado de la planificación en Ortems.', ['estado', 'estado plan', 'estado planificacion', 'etat', 'status', 'situacion', 'est']),
 ];
 
 export function fieldsFor(kind: SourceKind): FieldDef[] {
@@ -130,7 +135,7 @@ export interface RequiredRule {
 
 export function requiredRules(kind: SourceKind, role: SheetRole): RequiredRule[] {
   if (kind === 'ortems') return [{ anyOf: ['ordenId', 'preordenId'], message: 'Asigne la columna de orden o de preorden.' }];
-  if (role === 'filas') return [{ anyOf: ['ordenId'], message: 'Asigne la columna del número de orden.' }];
+  if (role === 'filas') return [{ anyOf: ['ordenId', 'preordenId'], message: 'Asigne la columna del número de orden o de preorden.' }];
   const join = ROLE_JOIN_FIELD[role];
   return [{ anyOf: [join], message: `Asigne la columna de unión (${join}).` }];
 }

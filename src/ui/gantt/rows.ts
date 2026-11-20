@@ -1,6 +1,7 @@
 import { isAdelantada, isRetrasada, type Analysis } from '../../engine/analysis';
 import type { FilterResult } from '../../engine/filters';
 import { naturalCompare } from '../../lib/text';
+import { nodeName, opSpan } from '../../engine/model';
 
 export type GroupBy = 'aparato' | 'familia' | 'seccion' | 'puesto' | 'orden';
 export type SourceMode = 'produccion' | 'ortems' | 'ambas';
@@ -23,6 +24,8 @@ export interface GBar {
   end: number;
   source: 'produccion' | 'ortems';
   summary: boolean;
+  /** Ejecución real (fichajes), no planificación. */
+  real?: boolean;
   flags: FlagId[];
   opKey?: string;
   ordenId?: string;
@@ -81,8 +84,9 @@ function leafNode(a: Analysis, opKey: string, source: SourceMode, labelMode: 'op
   if (!op) return undefined;
   const flags = opFlagIds(a, opKey);
   const bars: GBar[] = [];
-  if (source !== 'ortems' && op.start !== undefined && op.end !== undefined) {
-    bars.push({ id: `p:${opKey}`, start: op.start, end: Math.max(op.end, op.start), source: 'produccion', summary: false, flags, opKey, ordenId: op.ordenId });
+  const span = opSpan(op);
+  if (source !== 'ortems' && span) {
+    bars.push({ id: `p:${opKey}`, start: span.start, end: span.end, source: 'produccion', summary: false, real: span.real, flags, opKey, ordenId: op.ordenId });
   }
   const row = a.comparison.byOp.get(opKey);
   if (source !== 'produccion' && row?.ortStart !== undefined && row.ortEnd !== undefined) {
@@ -91,9 +95,10 @@ function leafNode(a: Analysis, opKey: string, source: SourceMode, labelMode: 'op
   }
   const fm = new Map<FlagId, number>();
   for (const f of flags) fm.set(f, 1);
-  const label = labelMode === 'op' ? `${op.label}${op.desc ? ` · ${op.desc}` : ''}` : `${op.ordenId} / ${op.label}`;
-  const sub = labelMode === 'op' ? op.puestoId : `${op.aparatoId ?? 's/aparato'}${op.desc ? ` · ${op.desc}` : ''}`;
-  return { id: `op:${opKey}`, kind: 'op', label, sub, children: [], bars, opKey, ordenId: op.ordenId, aparatoId: op.aparatoId, puestoId: op.puestoId, flags: fm, sortKey: op.start ?? Infinity };
+  const anon = op.operacionId === undefined;
+  const label = labelMode === 'op' ? `${op.label}${op.desc ? ` · ${op.desc}` : ''}` : anon ? nodeName(a.model.ordenes.get(op.ordenId), op.ordenId) : `${op.ordenId} / ${op.label}`;
+  const sub = labelMode === 'op' ? op.puestoId : `${op.aparatoId ?? 's/aparato'}${anon && op.seccion ? ` · ${op.seccion}` : op.desc ? ` · ${op.desc}` : ''}`;
+  return { id: `op:${opKey}`, kind: 'op', label, sub, children: [], bars, opKey, ordenId: op.ordenId, aparatoId: op.aparatoId, puestoId: op.puestoId, flags: fm, sortKey: span?.start ?? Infinity };
 }
 
 function ortemsLeaf(a: Analysis, rid: string): Node | undefined {
@@ -104,12 +109,12 @@ function ortemsLeaf(a: Analysis, rid: string): Node | undefined {
   return {
     id: `ort:${rid}`,
     kind: 'ortems',
-    label: `${r.ordenId ?? r.preordenId ?? '—'}${r.operacionId ? ` / ${r.operacionId}` : ''}`,
-    sub: `Solo Ortems${r.puestoId ? ` · ${r.puestoId}` : ''}${r.prioridadRaw ? ` · prio ${r.prioridadRaw}` : ''}`,
+    label: r.preordenId ? `Preorden ${r.preordenId}` : `${r.ordenId ?? '—'}${r.operacionId ? ` / ${r.operacionId}` : ''}`,
+    sub: `Solo Ortems${r.puestoId ? ` · ${r.puestoId}` : ''}${r.seccion ? ` · ${r.seccion}` : ''}${r.prioridadRaw ? ` · prio ${r.prioridadRaw}` : ''}`,
     children: [],
     bars,
     ortemsRid: rid,
-    aparatoId: r.aparatoId,
+    aparatoId: a.ortemsAparato.get(rid) ?? r.aparatoId,
     puestoId: r.puestoId,
     flags: new Map([['pend', 1]]),
     sortKey: r.inicio ?? Infinity,
@@ -152,7 +157,8 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
     : filtered
       ? [...filtered.ops]
       : [...m.ops.keys()];
-  const ortOnly = onlyAparato ? a.match.ortemsOnly.filter((rid) => a.ortems.get(rid)?.aparatoId === onlyAparato) : filtered ? [...filtered.ortemsOnly] : a.match.ortemsOnly;
+  const apOf = (rid: string) => a.ortemsAparato.get(rid) ?? a.ortems.get(rid)?.aparatoId;
+  const ortOnly = onlyAparato ? a.match.ortemsOnly.filter((rid) => apOf(rid) === onlyAparato) : filtered ? [...filtered.ortemsOnly] : a.match.ortemsOnly;
   const showOrtOnly = source !== 'produccion';
   const roots: Node[] = [];
 
@@ -160,8 +166,21 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
     const o = m.ordenes.get(ordenId);
     const kids = keys.map((k) => leafNode(a, k, source, 'op')).filter(Boolean) as Node[];
     kids.sort((x, y) => naturalCompare(x.label, y.label));
-    const rel = o?.parentId ? `↳ padre ${o.parentId}` : o && o.childIds.length ? 'orden raíz' : undefined;
-    return group(`ord:${ordenId}`, 'orden', `Orden ${ordenId}`, kids, [o?.articuloDesc, rel].filter(Boolean).join(' · '), { ordenId, aparatoId: o?.aparatoId });
+    const isPre = o?.tipo === 'preorden';
+    const rel = o?.parentId ? `↳ ${isPre ? 'siguiente' : 'padre'} ${o.parentId}${o.parentExternal ? ' (en Ortems)' : ''}` : o && o.childIds.length ? `${isPre ? 'preorden' : 'orden'} raíz` : undefined;
+    const sub = [o?.articuloDesc, keys.length === 1 ? m.ops.get(keys[0])?.seccion : undefined, rel].filter(Boolean).join(' · ');
+    const single = keys.length === 1 ? m.ops.get(keys[0]) : undefined;
+    if (single && single.operacionId === undefined && kids[0]) {
+      // Una sola operación sin identificador (p. ej. una preorden por fila): la fila de la orden ES la operación
+      const leaf = kids[0];
+      const ordRow = a.comparison.byOrden.get(ordenId)?.find((r) => r.level === 'orden');
+      if (source !== 'produccion' && ordRow?.ortStart !== undefined && ordRow.ortEnd !== undefined && !leaf.bars.some((b) => b.source === 'ortems')) {
+        const ovl = ordRow.discrepancies.some((d) => d.type === 'solape_ortems');
+        leaf.bars.push({ id: `os:ord:${ordenId}`, start: ordRow.ortStart, end: Math.max(ordRow.ortEnd, ordRow.ortStart), source: 'ortems', summary: false, flags: ovl ? ['ovl'] : [], opKey: single.key, ortemsRids: ordRow.ortemsRids, ordenId });
+      }
+      return { ...leaf, id: `ord:${ordenId}`, kind: 'op', label: nodeName(o, ordenId), sub, aparatoId: o?.aparatoId };
+    }
+    return group(`ord:${ordenId}`, 'orden', nodeName(o, ordenId), kids, sub, { ordenId, aparatoId: o?.aparatoId });
   };
   const byOrden = (keys: string[]) => {
     const mp = new Map<string, string[]>();
@@ -174,10 +193,18 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
     }
     return mp;
   };
+  const ortByAp = new Map<string, string[]>();
+  for (const rid of ortOnly) {
+    const ap = apOf(rid);
+    if (!ap) continue;
+    const l = ortByAp.get(ap) ?? [];
+    l.push(rid);
+    ortByAp.set(ap, l);
+  }
   const aparatoNode = (apId: string, keys: string[], prefix = ''): Node => {
     const ap = m.aparatos.get(apId);
     const ords = [...byOrden(keys).entries()].map(([o, ks]) => ordenNode(o, ks));
-    const extras = showOrtOnly ? ortOnly.filter((rid) => a.ortems.get(rid)?.aparatoId === apId).map((rid) => ortemsLeaf(a, rid)!).filter(Boolean) : [];
+    const extras = showOrtOnly ? (ortByAp.get(apId) ?? []).map((rid) => ortemsLeaf(a, rid)!).filter(Boolean) : [];
     return group(`${prefix}ap:${apId}`, 'aparato', `Aparato ${apId}`, [...ords, ...extras], [ap?.familia, ap?.desc].filter(Boolean).join(' · '), { aparatoId: apId });
   };
 
@@ -195,10 +222,7 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
       l.push(k);
       byAp.set(op.aparatoId, l);
     }
-    if (showOrtOnly) for (const rid of ortOnly) {
-      const ap = a.ortems.get(rid)?.aparatoId;
-      if (ap && m.aparatos.has(ap) && !byAp.has(ap)) byAp.set(ap, []);
-    }
+    if (showOrtOnly) for (const ap of ortByAp.keys()) if (m.aparatos.has(ap) && !byAp.has(ap)) byAp.set(ap, []);
     const apNodes = [...byAp.entries()].map(([ap, ks]) => aparatoNode(ap, ks, groupBy === 'familia' ? 'f:' : ''));
     if (groupBy === 'familia') {
       const fam = new Map<string, Node[]>();
@@ -215,9 +239,19 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
     roots.push(...[...byOrden(opKeys).entries()].map(([o, ks]) => ordenNode(o, ks)));
   } else {
     const byPuesto = new Map<string, Node[]>();
+    // sin puesto pero con sección (fichajes por sección): en la vista por sección cuelgan directamente de ella
+    const secDirect = new Map<string, Node[]>();
+    const secOfOrt = (rid: string) => a.ortems.get(rid)?.seccion;
     for (const k of opKeys) {
       const n = leafNode(a, k, source, 'full');
       if (!n) continue;
+      const sec = m.ops.get(k)?.seccion;
+      if (!n.puestoId && sec && groupBy === 'seccion') {
+        const l = secDirect.get(sec) ?? [];
+        l.push(n);
+        secDirect.set(sec, l);
+        continue;
+      }
       const p = n.puestoId ?? '(sin puesto)';
       const l = byPuesto.get(p) ?? [];
       l.push(n);
@@ -226,6 +260,13 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
     if (showOrtOnly) for (const rid of ortOnly) {
       const n = ortemsLeaf(a, rid);
       if (!n) continue;
+      const sec = secOfOrt(rid);
+      if (!n.puestoId && sec && groupBy === 'seccion') {
+        const l = secDirect.get(sec) ?? [];
+        l.push(n);
+        secDirect.set(sec, l);
+        continue;
+      }
       const p = n.puestoId ?? '(sin puesto)';
       const l = byPuesto.get(p) ?? [];
       l.push(n);
@@ -238,22 +279,27 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
     });
     if (groupBy === 'seccion') {
       const bySec = new Map<string, Node[]>();
+      for (const [sec, ns] of secDirect) {
+        ns.sort((x, y) => x.sortKey - y.sortKey);
+        bySec.set(sec, [group(`ptd:${sec}`, 'grupo', 'Sin puesto (carga de la sección)', ns, `${ns.length} elementos`)]);
+      }
       for (const n of puestoNodes) {
-        const s = m.puestos.get(n.puestoId!)?.seccion ?? '(sin sección)';
+        const s = m.puestos.get(n.puestoId!)?.seccion ?? a.load.ortems.puestos.get(n.puestoId!)?.seccion ?? '(sin sección)';
         const l = bySec.get(s) ?? [];
         l.push(n);
         bySec.set(s, l);
       }
       for (const [s, ns] of bySec) {
         ns.sort((x, y) => naturalCompare(x.label, y.label));
-        roots.push(group(`sec:${s}`, 'grupo', s, ns, `${ns.length} puestos`));
+        const np = ns.filter((n) => !n.id.startsWith('ptd:')).length;
+        roots.push(group(`sec:${s}`, 'grupo', s, ns, np ? `${np} puestos` : undefined));
       }
     } else roots.push(...puestoNodes);
   }
 
   if (showOrtOnly && (groupBy === 'aparato' || groupBy === 'familia' || groupBy === 'orden')) {
     const orphan = ortOnly.filter((rid) => {
-      const ap = a.ortems.get(rid)?.aparatoId;
+      const ap = apOf(rid);
       return groupBy === 'orden' || !ap || !m.aparatos.has(ap);
     });
     if (orphan.length) {
@@ -267,7 +313,9 @@ export function buildTree(a: Analysis, filtered: FilterResult | undefined, group
       }
       const kids = [...byKey.entries()].map(([k, ns]) => {
         const r = a.ortems.get(ns[0].ortemsRid!)!;
-        return group(`ok:${k}`, 'orden', r.ordenId ? `Orden ${k}` : `Preorden ${k}`, ns, `${r.aparatoId ? `aparato ${r.aparatoId} · ` : ''}solo en Ortems`);
+        if (ns.length === 1) return ns[0];
+        const ap = apOf(r.rid);
+        return group(`ok:${k}`, 'orden', r.ordenId ? `Orden ${k}` : `Preorden ${k}`, ns, `${ap ? `aparato ${ap} · ` : ''}solo en Ortems`);
       });
       roots.push(group('g:ortonly', 'grupo', 'Solo en Ortems (sin correspondencia en producción)', kids, `${orphan.length} registros`));
     }

@@ -29,23 +29,31 @@ export function BarTooltip({ analysis: a, bar, x, y }: { analysis: Analysis; bar
     <div className="gtip" ref={ref} style={pos} role="tooltip">
       <h4>
         <span className={`sw ${isOrt ? 'sw-ortems' : 'sw-prod'}`} style={{ width: 10, height: 10, borderRadius: 2, display: 'inline-block' }} />
-        {isOrt ? 'Planificación Ortems' : 'Planificación de producción'}
+        {isOrt ? 'Planificación Ortems' : bar.real ? 'Ejecución real (fichajes)' : 'Planificación de producción'}
         {bar.summary && <span className="muted small">(resumen)</span>}
       </h4>
       <dl>
-        <dt>Orden</dt>
-        <dd className="id">{op?.ordenId ?? ort?.ordenId ?? bar.ordenId ?? '—'}</dd>
-        {(ort?.preordenId || ord?.preordenId) && (
+        <dt>{ord?.tipo === 'preorden' && !ort?.ordenId ? 'Preorden' : 'Orden'}</dt>
+        <dd className="id">{ord?.tipo === 'preorden' ? ord.ordenId ?? ord.id : op?.ordenId ?? ort?.ordenId ?? bar.ordenId ?? '—'}</dd>
+        {ort?.ordenId && ord?.tipo === 'preorden' && (
+          <>
+            <dt>Orden (Ortems)</dt>
+            <dd className="id">{ort.ordenId}</dd>
+          </>
+        )}
+        {(ort?.preordenId || ord?.preordenId) && ord?.tipo !== 'preorden' && (
           <>
             <dt>Preorden</dt>
             <dd className="id">{ort?.preordenId ?? ord?.preordenId}</dd>
           </>
         )}
         <dt>Aparato</dt>
-        <dd className="id">{op?.aparatoId ?? ord?.aparatoId ?? ort?.aparatoId ?? '—'}</dd>
+        <dd className="id">{op?.aparatoId ?? ord?.aparatoId ?? (ort ? a.ortemsAparato.get(ort.rid) ?? ort.aparatoId : undefined) ?? '—'}</dd>
         <dt>Artículo</dt>
-        <dd>{op?.articuloRef ?? ord?.articuloRef ?? ort?.articuloRef ?? '—'}</dd>
-        {(op || ort?.operacionId) && (
+        <dd>
+          {op?.articuloRef ?? ord?.articuloRef ?? ort?.articuloRef ?? '—'} {ort?.articuloDesc ? <span className="muted">{ort.articuloDesc}</span> : ''}
+        </dd>
+        {((op && op.operacionId !== undefined) || ort?.operacionId) && (
           <>
             <dt>Operación</dt>
             <dd>
@@ -58,18 +66,25 @@ export function BarTooltip({ analysis: a, bar, x, y }: { analysis: Analysis; bar
           {isOrt ? cmp?.puestoOrtems ?? ort?.puestoId ?? '—' : op?.puestoId ?? '—'} {op?.puestoDesc ? <span className="muted">{op.puestoDesc}</span> : ''}
         </dd>
         <dt>Sección</dt>
-        <dd>{op?.seccion ?? (ort?.puestoId ? a.model.puestos.get(ort.puestoId)?.seccion : undefined) ?? '—'}</dd>
-        <dt>Inicio previsto</dt>
+        <dd>{(isOrt ? ort?.seccion : undefined) ?? op?.seccion ?? ort?.seccion ?? (ort?.puestoId ? a.model.puestos.get(ort.puestoId)?.seccion : undefined) ?? '—'}</dd>
+        <dt>{bar.real ? 'Inicio real' : 'Inicio previsto'}</dt>
         <dd>{fmtDateTime(bar.start)}</dd>
-        <dt>Fin previsto</dt>
+        <dt>{bar.real ? 'Fin real' : 'Fin previsto'}</dt>
         <dd>{fmtDateTime(bar.end)}</dd>
         <dt>Duración</dt>
         <dd>
           {fmtHours(durH)} transcurridas
           {!isOrt && op?.durationH !== undefined && ` · ${fmtHours(op.durationH)} de trabajo`}
+          {isOrt && ort?.duracionH !== undefined && ` · ${fmtHours(ort.duracionH)} de carga`}
           {!isOrt && flags?.durEstimada && ` · ${fmtHours(flags.hours)} estimadas`}
         </dd>
-        {!isOrt && op?.realStart !== undefined && (
+        {!isOrt && op?.avance !== undefined && (
+          <>
+            <dt>Avance</dt>
+            <dd>{op.avance} %</dd>
+          </>
+        )}
+        {!isOrt && !bar.real && op?.realStart !== undefined && (
           <>
             <dt>Real</dt>
             <dd>

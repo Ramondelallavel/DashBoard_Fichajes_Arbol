@@ -47,14 +47,15 @@ function cellBg(occ: number | undefined, h: number, maxH: number, capKnown: bool
 
 export function CargaPage({ onFilters }: { onFilters: () => void }) {
   const { analysis: a, filtered } = useAnalysis();
-  const filteredLoad = useFilteredLoad(a, filtered);
-  const [src, setSrc] = useState<Src>('produccion');
+  const [srcSel, setSrc] = useState<Src | undefined>();
+  const src: Src = srcSel ?? a?.loadBase ?? 'produccion';
+  const filteredLoad = useFilteredLoad(a, filtered, src);
   const [scope, setScope] = useState<'puesto' | 'seccion'>('puesto');
   const [g, setG] = useState<Granularity>('semana');
   const [metric, setMetric] = useState<'ocupacion' | 'horas'>('ocupacion');
   const [cell, setCell] = useState<{ rl: ResourceLoad; c: LoadCell } | undefined>();
   const exp = useExport();
-  const load: LoadResult | undefined = a ? (src === 'produccion' ? filteredLoad : a.load[src]) : undefined;
+  const load: LoadResult | undefined = a ? filteredLoad : undefined;
   const ps = useMemo(() => (a ? periods(g, a.refMs, a.settings.horizonWeeks) : []), [a, g]);
   if (!a || !load) return <NoData />;
   const res = [...(scope === 'puesto' ? load.puestos : load.secciones).values()].sort((x, y) => naturalCompare(x.id, y.id));

@@ -3,7 +3,7 @@ import type { Alert } from './alerts';
 import { isRetrasada, type Analysis, type OpFlags } from './analysis';
 import type { Confianza } from './bottlenecks';
 import type { ComparisonRow } from './comparison';
-import type { Aparato, Dependency, Operacion, Orden } from './model';
+import { opSpan, type Aparato, type Dependency, type Operacion, type Orden } from './model';
 
 export interface PuestoPaso {
   puestoId: string;
@@ -37,7 +37,7 @@ export function analyzeAparato(a: Analysis, aparatoId: string): AparatoAnalysis 
   const ap = a.model.aparatos.get(aparatoId);
   if (!ap) return undefined;
   const ordenes = ap.ordenIds.map((id) => a.model.ordenes.get(id)!).filter(Boolean);
-  const ops = ordenes.flatMap((o) => o.opKeys.map((k) => a.model.ops.get(k)!)).sort((x, y) => (x.start ?? Infinity) - (y.start ?? Infinity));
+  const ops = ordenes.flatMap((o) => o.opKeys.map((k) => a.model.ops.get(k)!)).sort((x, y) => (opSpan(x)?.start ?? Infinity) - (opSpan(y)?.start ?? Infinity));
   const byPuesto = new Map<string, Operacion[]>();
   for (const op of ops) {
     if (!op.puestoId) continue;
@@ -49,7 +49,8 @@ export function analyzeAparato(a: Analysis, aparatoId: string): AparatoAnalysis 
   for (const [puestoId, list] of byPuesto) {
     const weeks = new Set<string>();
     for (const op of list) {
-      if (op.start !== undefined) weeks.add(weekKey(op.start));
+      const sp = opSpan(op);
+      if (sp) weeks.add(weekKey(sp.start));
       if (op.end !== undefined) weeks.add(weekKey(op.end));
     }
     const pl = a.load.produccion.puestos.get(puestoId);
@@ -77,7 +78,7 @@ export function analyzeAparato(a: Analysis, aparatoId: string): AparatoAnalysis 
       puestoId,
       seccion: a.model.puestos.get(puestoId)?.seccion,
       ops: list,
-      firstStart: Math.min(...list.map((o) => o.start ?? Infinity)),
+      firstStart: Math.min(...list.map((o) => opSpan(o)?.start ?? Infinity)),
       lastEnd: Math.max(...list.map((o) => o.end ?? -Infinity)),
       hours: list.reduce((s, o) => s + (a.opFlags.get(o.key)?.hours ?? 0), 0),
       saturatedWeeks: saturatedWeeks.sort((x, y) => x.week.localeCompare(y.week)),

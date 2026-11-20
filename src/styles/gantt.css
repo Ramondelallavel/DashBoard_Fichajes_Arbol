@@ -251,6 +251,12 @@
 .gbar.prod {
   background: var(--prod);
 }
+/* Ejecución real (fichajes): mismo color de producción, con trama vertical y borde, para no confundirla con un plan */
+.gbar.prod.real {
+  background: repeating-linear-gradient(90deg, var(--prod) 0 3px, color-mix(in srgb, var(--prod) 55%, transparent) 3px 5px);
+  outline: 1px solid color-mix(in srgb, var(--prod) 80%, black);
+  outline-offset: -1px;
+}
 .gbar.ortems {
   background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ortems) 70%, transparent) 0 2px, transparent 2px 5px), var(--ortems-soft);
   border: 1.5px solid var(--ortems);

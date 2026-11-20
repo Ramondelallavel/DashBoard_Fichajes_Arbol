@@ -12,6 +12,7 @@ import type {
   SourceKind,
 } from '../domain/types';
 import { uid } from '../lib/text';
+import { BUILTIN_PROFILES } from '../domain/builtinProfiles';
 import { detectHeaderRow, headersAt, type HeaderDetection } from './header';
 import { findProfile, headerSignature, mappingToProfileMapping, suggestMapping, type ColumnSuggestion } from './mapping';
 import { normalizeImport, type NormalizeResult } from './normalize';
@@ -41,7 +42,8 @@ export function analyzeSheet(
   const header = detectHeaderRow(grid);
   const idx = headerIndex ?? header.index;
   const headers = headersAt(grid, idx);
-  const profile = findProfile(profiles, kind, role, headers);
+  // Primero los perfiles del usuario; si ninguno encaja, los formatos conocidos incluidos en la aplicación
+  const profile = findProfile(profiles, kind, role, headers) ?? findProfile(BUILTIN_PROFILES, kind, role, headers);
   const samples = grid.rows.slice(idx + 1, idx + 41).map((r) => r.map(toRawCell));
   const suggestions = suggestMapping(headers, samples, kind, role, profile?.options ?? opts, profile);
   const dataRows = grid.rows.slice(idx + 1).filter((r) => r.some((c) => c !== null && c !== '')).length;
@@ -128,10 +130,12 @@ export function autoImport(
   user: string,
   now?: Date,
 ): PreparedImport {
+  let options: ParseOptions = DEFAULT_PARSE_OPTIONS;
   const configured = sheets.map(({ grid, role }) => {
     const an = analyzeSheet(grid, kind, role, DEFAULT_PARSE_OPTIONS, []);
+    if (an.profile) options = { ...options, ...an.profile.options };
     const config: SheetImportConfig = { sheet: grid.name, role, headerRow: an.headerIndex + 1, mapping: suggestionsToMapping(an.suggestions) };
     return { grid, config };
   });
-  return prepareImport({ kind, fileName, fileSize: 0, fileHash: 'demo', sheets: configured, options: DEFAULT_PARSE_OPTIONS, mode, previous, settings, user, now });
+  return prepareImport({ kind, fileName, fileSize: 0, fileHash: 'demo', sheets: configured, options, mode, previous, settings, user, now });
 }

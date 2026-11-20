@@ -2,11 +2,11 @@ import { isHighPriority, priorityRank, type Settings } from '../domain/settings'
 import type { DatasetVersion, OrtemsRecord } from '../domain/types';
 import { HOUR } from '../lib/dates';
 import { fmtNum } from '../lib/format';
-import { stableHash } from '../lib/text';
+import { idKey, stableHash } from '../lib/text';
 import { recordKey } from '../import/normalize';
 import type { CapacityCalendar } from './calendar';
 import type { MatchResult } from './matching';
-import type { ProductionModel } from './model';
+import { nodeName, type ProductionModel } from './model';
 import { OVERLAP_LABEL, type OverlapGroup } from './overlaps';
 
 export type Criticidad = 'critica' | 'alta' | 'media' | 'informativa';
@@ -33,7 +33,9 @@ export type DiscrepancyType =
   | 'precedencia_ortems'
   | 'solape_ortems'
   | 'multiples_registros'
-  | 'saturacion_combinada';
+  | 'saturacion_combinada'
+  | 'terminada_planificada'
+  | 'anulada_planificada';
 
 export const DISCREPANCY_LABEL: Record<DiscrepancyType, string> = {
   inicio: 'Diferencia de inicio',
@@ -52,6 +54,8 @@ export const DISCREPANCY_LABEL: Record<DiscrepancyType, string> = {
   solape_ortems: 'Solapamiento en Ortems',
   multiples_registros: 'Varios registros Ortems',
   saturacion_combinada: 'Saturación combinada',
+  terminada_planificada: 'Terminada en producción, planificada en Ortems',
+  anulada_planificada: 'Anulada en producción, planificada en Ortems',
 };
 
 export interface Discrepancy {
@@ -79,6 +83,11 @@ export interface ComparisonRow {
   highPriority: boolean;
   prodStart?: number;
   prodEnd?: number;
+  /** Ejecución real según producción (fichajes). */
+  realStart?: number;
+  realEnd?: number;
+  avance?: number;
+  estadoProd?: string;
   ortStart?: number;
   ortEnd?: number;
   /** Desfases producción − Ortems. Positivo = producción más tarde que Ortems. */
@@ -133,6 +142,10 @@ export interface CompareInput {
   settings: Settings;
   ortemsPrev?: DatasetVersion;
   ortemsOverlaps: OverlapGroup[];
+  /** Fecha de referencia (para valorar si una planificación de Ortems es futura). */
+  refMs?: number;
+  /** Aparato de producción resuelto para cada registro de Ortems. */
+  ortemsAparato?: Map<string, string>;
 }
 
 export function compareSources(input: CompareInput): ComparisonResult {
@@ -222,6 +235,27 @@ export function compareSources(input: CompareInput): ComparisonResult {
     }
   };
 
+  const refMs = input.refMs ?? Date.now();
+  const fmtD = (ms?: number) => (ms === undefined ? '—' : new Date(ms).toLocaleDateString('es-ES'));
+  /** Producción da por terminada (o anulada) una orden u operación que Ortems sigue planificando. */
+  const stateVsPlan = (row: ComparisonRow, estado: string, what: string) => {
+    if (row.ortStart === undefined && row.ortEnd === undefined) return;
+    const future = (row.ortEnd ?? row.ortStart!) >= refMs;
+    if (estado === 'terminada') {
+      row.discrepancies.push({
+        type: 'terminada_planificada',
+        criticidad: future ? 'alta' : 'media',
+        message: `${what} figura terminada en producción${row.realEnd !== undefined ? ` (fin real ${fmtD(row.realEnd)})` : ''}, pero Ortems la planifica del ${fmtD(row.ortStart)} al ${fmtD(row.ortEnd)}${future ? ': reserva capacidad futura para trabajo ya hecho' : ''}.`,
+      });
+    } else if (estado === 'anulada') {
+      row.discrepancies.push({
+        type: 'anulada_planificada',
+        criticidad: future ? 'alta' : 'media',
+        message: `${what} figura anulada en producción, pero Ortems la planifica del ${fmtD(row.ortStart)} al ${fmtD(row.ortEnd)}.`,
+      });
+    }
+  };
+
   // 1) Emparejamientos a nivel de operación
   for (const [opKey, rids] of match.opMatches) {
     const op = model.ops.get(opKey);
@@ -244,6 +278,10 @@ export function compareSources(input: CompareInput): ComparisonResult {
       highPriority: isHighPriority(info.prioridad, settings),
       prodStart: op.start,
       prodEnd: op.end,
+      realStart: op.realStart,
+      realEnd: op.realEnd,
+      avance: op.avance,
+      estadoProd: op.estado,
       ortStart: info.ortStart,
       ortEnd: info.ortEnd,
       discrepancies: [],
@@ -253,6 +291,7 @@ export function compareSources(input: CompareInput): ComparisonResult {
       regla: match.matches.get(rids[0])?.rule.label,
     };
     compareDates(row);
+    stateVsPlan(row, op.estado, `La operación ${op.label} de ${op.ordenId}`);
     if (info.puesto && op.puestoId && info.puesto.trim().toUpperCase() !== op.puestoId.trim().toUpperCase()) {
       row.discrepancies.push({ type: 'recurso', criticidad: 'media', message: `Recurso distinto: producción ${op.puestoId}, Ortems ${info.puesto}.` });
     }
@@ -281,6 +320,10 @@ export function compareSources(input: CompareInput): ComparisonResult {
       highPriority: isHighPriority(info.prioridad, settings),
       prodStart: o.start,
       prodEnd: o.end,
+      realStart: o.realStart,
+      realEnd: o.realEnd,
+      avance: maxDef(o.opKeys.map((k) => model.ops.get(k)?.avance)),
+      estadoProd: o.estado,
       ortStart: info.ortStart,
       ortEnd: info.ortEnd,
       discrepancies: [],
@@ -290,6 +333,7 @@ export function compareSources(input: CompareInput): ComparisonResult {
       regla: match.matches.get(rids[0])?.rule.label,
     };
     compareDates(row);
+    stateVsPlan(row, o.estado, `La ${o.tipo === 'preorden' ? 'preorden' : 'orden'} ${o.id}`);
     if (info.puesto && opPuestos.size && !opPuestos.has(info.puesto.toUpperCase())) {
       row.discrepancies.push({ type: 'recurso', criticidad: 'media', message: `Ortems asigna el recurso ${info.puesto}, que no aparece en ninguna operación de la orden en producción.` });
     }
@@ -309,7 +353,14 @@ export function compareSources(input: CompareInput): ComparisonResult {
     const high = isHighPriority(r.prioridad, settings);
     const isPre = !r.ordenId && !!r.preordenId;
     const ds: Discrepancy[] = [];
-    if (isPre) {
+    if (!model.has.previstas && model.ops.size) {
+      // Producción solo contiene ejecución real: es normal que el trabajo futuro planificado aún no tenga fichajes
+      ds.push({
+        type: 'solo_ortems',
+        criticidad: high ? 'alta' : 'informativa',
+        message: `${r.preordenId ? `Preorden ${r.preordenId}` : `Orden ${r.ordenId}`} planificada en Ortems sin fichajes en producción${(r.fin ?? r.inicio ?? 0) >= refMs ? ' (trabajo futuro)' : ' aunque su plan ya ha pasado'}.`,
+      });
+    } else if (isPre) {
       ds.push({
         type: 'preorden_no_lanzada',
         criticidad: high ? 'critica' : 'informativa',
@@ -329,7 +380,7 @@ export function compareSources(input: CompareInput): ComparisonResult {
     push({
       id: `cmp:ort:${rid}`,
       level: 'solo_ortems',
-      aparatoId: r.aparatoId,
+      aparatoId: input.ortemsAparato?.get(rid) ?? r.aparatoId,
       ordenId: r.ordenId,
       preordenId: r.preordenId,
       operacionLabel: r.operacionId,
@@ -353,7 +404,7 @@ export function compareSources(input: CompareInput): ComparisonResult {
     push({
       id: `cmp:amb:${a.rid}`,
       level: 'ambigua',
-      aparatoId: r.aparatoId,
+      aparatoId: input.ortemsAparato?.get(a.rid) ?? r.aparatoId,
       ordenId: r.ordenId,
       preordenId: r.preordenId,
       operacionLabel: r.operacionId,
@@ -391,11 +442,18 @@ export function compareSources(input: CompareInput): ComparisonResult {
       highPriority: false,
       prodStart: o.start,
       prodEnd: o.end,
+      realStart: o.realStart,
+      realEnd: o.realEnd,
+      estadoProd: o.estado,
       discrepancies: [
         {
           type: 'solo_produccion',
-          criticidad: done ? 'informativa' : 'media',
-          message: done ? `La orden ${ordenId} está terminada y Ortems ya no la planifica.` : `La orden ${ordenId} está en producción pero Ortems no la planifica.`,
+          criticidad: done || o.estado === 'anulada' ? 'informativa' : 'media',
+          message: done
+            ? `La ${o.tipo === 'preorden' ? 'preorden' : 'orden'} ${ordenId} está terminada y Ortems ya no la planifica.`
+            : o.estado === 'anulada'
+              ? `La ${o.tipo === 'preorden' ? 'preorden' : 'orden'} ${ordenId} está anulada; Ortems no la planifica.`
+              : `La ${o.tipo === 'preorden' ? 'preorden' : 'orden'} ${ordenId} está en producción${o.estado === 'en_curso' ? ' (en curso)' : ''} pero Ortems no la planifica.`,
         },
       ],
       coincide: false,
@@ -487,6 +545,44 @@ export function compareSources(input: CompareInput): ComparisonResult {
     }
   }
 
+  // 7b) Precedencias del árbol (hijo → padre) en la planificación de Ortems, a nivel de orden/preorden:
+  //     el padre (siguiente) no puede empezar antes de que termine el hijo.
+  const norm = (x?: string) => (x === undefined ? undefined : idKey(x, { caseInsensitive: settings.matching.caseInsensitive, stripLeadingZeros: settings.matching.stripLeadingZeros }));
+  const ortByNode = new Map<string, OrtemsRecord[]>();
+  for (const r of ortems.values()) {
+    for (const id of new Set([norm(r.preordenId), norm(r.ordenId)])) {
+      if (!id) continue;
+      const l = ortByNode.get(id) ?? [];
+      l.push(r);
+      ortByNode.set(id, l);
+    }
+  }
+  const nodeOrt = (id: string, o?: { ordenId?: string; preordenId?: string }) => {
+    const keys = new Set([norm(id), norm(o?.ordenId), norm(o?.preordenId)]);
+    const out = new Map<string, OrtemsRecord>();
+    for (const k of keys) if (k) for (const r of ortByNode.get(k) ?? []) out.set(r.rid, r);
+    return [...out.values()];
+  };
+  for (const child of model.ordenes.values()) {
+    if (!child.parentId || child.estado === 'terminada' || child.estado === 'anulada') continue;
+    const cr = nodeOrt(child.id, child);
+    const childEnd = maxDef(cr.map((r) => r.fin));
+    if (childEnd === undefined) continue;
+    const parent = model.ordenes.get(child.parentId);
+    const pr = nodeOrt(child.parentId, parent);
+    const parentStart = minDef(pr.map((r) => r.inicio));
+    if (parentStart === undefined || parentStart >= childEnd) continue;
+    const row = pr.map((r) => byOrtemsRid.get(r.rid)).find(Boolean);
+    if (!row || row.discrepancies.some((d) => d.type === 'precedencia_ortems' && d.message.includes(child.id))) continue;
+    row.discrepancies.push({
+      type: 'precedencia_ortems',
+      criticidad: child.parentLink === 'confirmada' ? 'alta' : 'media',
+      message: `Ortems inicia ${nodeName(parent, child.parentId).toLowerCase()} el ${fmtD(parentStart)}, antes de que termine ${nodeName(child).toLowerCase()} que la precede en el árbol (fin Ortems ${fmtD(childEnd)})${child.parentLink === 'confirmada' ? '' : ' — relación no confirmada'}.`,
+    });
+    row.criticidad = worstCrit(row.discrepancies);
+    row.coincide = false;
+  }
+
   // 8) Solapamientos en Ortems
   for (const g of input.ortemsOverlaps) {
     if (g.clase === 'solape_dentro_capacidad') continue;
@@ -495,7 +591,8 @@ export function compareSources(input: CompareInput): ComparisonResult {
       if (!row || row.discrepancies.some((d) => d.type === 'solape_ortems')) continue;
       row.discrepancies.push({
         type: 'solape_ortems',
-        criticidad: g.clase === 'sobrecarga_confirmada' ? 'alta' : 'media',
+        // sin capacidad paralela configurada el solape solo es potencial (un puesto puede tener varias máquinas u operarios)
+        criticidad: g.clase === 'sobrecarga_confirmada' ? 'alta' : g.clase === 'solape_potencial' ? 'informativa' : 'media',
         message: `${OVERLAP_LABEL[g.clase]}: Ortems programa ${g.maxConcurrency} trabajos a la vez en ${g.puestoId}${g.units ? ` (capacidad ${g.units} ${g.unitsSource === 'supuesta' ? 'supuesta' : 'configurada'})` : ' (capacidad paralela desconocida)'}.`,
       });
       row.criticidad = worstCrit(row.discrepancies);

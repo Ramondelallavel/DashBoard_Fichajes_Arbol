@@ -12,7 +12,7 @@ import { DivergingColumns, HBarList, PeriodColumns, StatusLegend } from '../comp
 import { ConfPill, CritPill, Kpi, NoData, Notice, Panel } from '../components/common';
 import { Icon } from '../components/Icon';
 import { useExport } from '../components/useExport';
-import { FiltersRow, occStatus, PageHead, useFilteredLoad, weekOptions } from './shared';
+import { BASE_LABEL, FiltersRow, occStatus, PageHead, useFilteredLoad, weekOptions } from './shared';
 
 export function DashboardPage({ onFilters }: { onFilters: () => void }) {
   const { analysis: a, filtered } = useAnalysis();
@@ -37,7 +37,7 @@ export function DashboardPage({ onFilters }: { onFilters: () => void }) {
     const sinOrtems = ords.filter((o) => (a.comparison.byOrden.get(o.id) ?? []).some((r) => r.level === 'solo_produccion')).length;
     const solapes = a.overlaps.produccion.filter((g) => g.clase !== 'solape_dentro_capacidad' && g.ids.some((k) => filtered.ops.has(k)));
     const confirmedOv = solapes.filter((g) => g.clase === 'sobrecarga_confirmada').length;
-    const satPuestos = a.bottlenecks.ranking.filter((r) => filtered.puestos.has(r.id) && r.overloadedWeeks > 0);
+    const satPuestos = a.bottlenecks.ranking.filter((r) => (!filtered.active || load?.puestos.has(r.id)) && r.overloadedWeeks > 0);
     const inSel = (x: (typeof a.alerts)[number]) => !filtered.active || (x.opKey ? filtered.ops.has(x.opKey) : x.ordenId ? filtered.ordenes.has(x.ordenId) : true);
     const criticas = a.alerts.filter((x) => x.criticidad === 'critica' && inSel(x)).length;
     const altas = a.alerts.filter((x) => x.criticidad === 'alta' && inSel(x)).length;
@@ -57,9 +57,10 @@ export function DashboardPage({ onFilters }: { onFilters: () => void }) {
       criticas,
       altas,
     };
-  }, [a, filtered]);
+  }, [a, filtered, load]);
 
   if (!a || !filtered || !kpis || !load) return <NoData />;
+  const preNodes = [...a.model.ordenes.values()].every((o) => o.tipo === 'preorden');
 
   const weeks = weekOptions(load, a.refMs);
   const curWeek = week ?? weekKey(a.refMs);
@@ -152,19 +153,20 @@ export function DashboardPage({ onFilters }: { onFilters: () => void }) {
     .map(([k, v]) => ({ key: k, label: weekLabel(k).split(' ')[0], value: v.sum / v.n, count: v.n }));
 
   const topAlerts = a.alerts.filter((x) => (x.criticidad === 'critica' || x.criticidad === 'alta') && (!filtered.active || (x.opKey ? filtered.ops.has(x.opKey) : x.ordenId ? filtered.ordenes.has(x.ordenId) : true))).slice(0, 6);
-  const forecasts = a.bottlenecks.forecasts.filter((f) => !filtered.active || f.ids.some((k) => filtered.ops.has(k))).slice(0, 6);
+  const forecasts = a.bottlenecks.forecasts.filter((f) => !filtered.active || (f.scope === 'puesto' ? load.puestos : load.secciones).has(f.entityId)).slice(0, 6);
+  const demo = a.demonstrated.forecasts.filter((f) => !filtered.active || load.secciones.has(f.seccion)).slice(0, 6);
 
   return (
     <div className="page">
       <PageHead
         eyebrow="Visión general"
         title="Situación de fábrica"
-        lead="Indicadores calculados sobre la planificación importada y los filtros activos. Los valores de ocupación solo se muestran donde hay capacidad configurada."
+        lead={`Indicadores calculados sobre la planificación importada y los filtros activos. Carga y cuellos de botella sobre la planificación de ${BASE_LABEL[a.loadBase]}. Los valores de ocupación solo se muestran donde hay capacidad configurada.`}
         actions={
           <button
             className="btn"
             disabled={!exp.allowed || exp.busy}
-            onClick={() => void exp.run('situacion_fabrica', 'Situación de fábrica', (ctx) => [ordersSheet(ctx), planningSheet(ctx), loadSheet(ctx.analysis, 'puesto', 'semana', 'produccion'), loadSheet(ctx.analysis, 'seccion', 'semana', 'produccion'), ...bottleneckSheets(ctx.analysis)])}
+            onClick={() => void exp.run('situacion_fabrica', 'Situación de fábrica', (ctx) => [ordersSheet(ctx), planningSheet(ctx), loadSheet(ctx.analysis, 'puesto', 'semana', ctx.analysis.loadBase), loadSheet(ctx.analysis, 'seccion', 'semana', ctx.analysis.loadBase), ...bottleneckSheets(ctx.analysis)])}
           >
             <Icon name="download" /> Exportar a Excel
           </button>
@@ -173,7 +175,7 @@ export function DashboardPage({ onFilters }: { onFilters: () => void }) {
       <FiltersRow onFilters={onFilters} />
       <div className="grid grid-kpi five">
         <Kpi label="Aparatos" value={fmtNum(kpis.aparatos)} onClick={() => go('arbol')} />
-        <Kpi label="Órdenes de fabricación" value={fmtNum(kpis.ordenes)} sub={`${fmtNum(kpis.pendientes)} pendientes o en curso`} onClick={() => go('gantt')} />
+        <Kpi label={preNodes ? 'Preórdenes con fichajes' : 'Órdenes de fabricación'} value={fmtNum(kpis.ordenes)} sub={`${fmtNum(kpis.pendientes)} pendientes o en curso`} onClick={() => go('gantt')} />
         <Kpi label="Preórdenes" value={fmtNum(kpis.preordenes)} sub={kpis.ortemsOnly ? `${fmtNum(kpis.ortemsOnly)} registros solo en Ortems` : undefined} />
         <Kpi label="Operaciones" value={fmtNum(kpis.ops)} sub={filtered.active ? `de ${fmtNum(filtered.totalOps)}` : undefined} />
         <Kpi label="Órdenes retrasadas" value={fmtNum(kpis.retrasadas)} state={kpis.retrasadas ? 'crit' : undefined} sub="con alguna operación retrasada" onClick={() => setFilters({ ...filters, flags: { ...filters.flags, retrasada: true } })} />
@@ -256,11 +258,17 @@ export function DashboardPage({ onFilters }: { onFilters: () => void }) {
           )}
         </Panel>
         <Panel title="Previsión de cuellos de botella" actions={<a className="btn btn-sm" href="#cuellos">Analizar</a>}>
-          {forecasts.length ? (
+          {forecasts.length || demo.length ? (
             <div className="stack">
               {forecasts.map((f) => (
                 <div key={f.id} className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   <ConfPill c={f.confianza} />
+                  <div className="small">{f.message}</div>
+                </div>
+              ))}
+              {demo.map((f) => (
+                <div key={f.id} className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                  <ConfPill c="estimado" />
                   <div className="small">{f.message}</div>
                 </div>
               ))}

@@ -15,6 +15,8 @@ export interface LoadItem {
   hours?: number;
   /** Las horas proceden de una estimación (no del dato de duración del Excel). */
   estimated: boolean;
+  /** Las fechas son de ejecución real (fichajes), no de planificación. */
+  real?: boolean;
   source: 'produccion' | 'ortems';
 }
 
@@ -100,15 +102,26 @@ export function computeLoad(items: LoadItem[], calendar: CapacityCalendar, sourc
   let rangeStart = Infinity;
   let rangeEnd = -Infinity;
 
+  // Carga con sección pero sin puesto (p. ej. fichajes por sección): cuenta en la sección, sin capacidad propia
+  const direct = new Map<string, ResourceLoad>();
   for (const it of items) {
+    let pl: ResourceLoad | undefined;
     if (!it.puestoId) {
-      sinPuesto.push(it.id);
-      continue;
-    }
-    let pl = puestos.get(it.puestoId);
-    if (!pl) {
-      pl = emptyLoad(it.puestoId, 'puesto', calendar.capacitySource(it.puestoId), puestoSeccion.get(it.puestoId) ?? it.seccion);
-      puestos.set(it.puestoId, pl);
+      if (!it.seccion) {
+        sinPuesto.push(it.id);
+        continue;
+      }
+      pl = direct.get(it.seccion);
+      if (!pl) {
+        pl = emptyLoad(it.seccion, 'seccion', 'desconocida', it.seccion);
+        direct.set(it.seccion, pl);
+      }
+    } else {
+      pl = puestos.get(it.puestoId);
+      if (!pl) {
+        pl = emptyLoad(it.puestoId, 'puesto', calendar.capacitySource(it.puestoId), puestoSeccion.get(it.puestoId) ?? it.seccion);
+        puestos.set(it.puestoId, pl);
+      }
     }
     if (it.hours === undefined) {
       pl.noHoursIds.push(it.id);
@@ -150,6 +163,13 @@ export function computeLoad(items: LoadItem[], calendar: CapacityCalendar, sourc
 
   // Secciones
   const secciones = new Map<string, ResourceLoad>();
+  for (const [sec, dl] of direct) {
+    const sl = emptyLoad(sec, 'seccion', 'desconocida');
+    sl.members = [];
+    sl.membersWithCap = 0;
+    secciones.set(sec, sl);
+    void dl;
+  }
   for (const pl of puestos.values()) {
     const sec = pl.seccion ?? '(sin sección)';
     let sl = secciones.get(sec);
@@ -171,8 +191,24 @@ export function computeLoad(items: LoadItem[], calendar: CapacityCalendar, sourc
   for (const sl of secciones.values()) {
     const members = sl.members!.map((id) => puestos.get(id)!);
     const known = members.filter((m) => m.capSource !== 'desconocida');
-    sl.capSource = known.length === 0 ? 'desconocida' : known.length < members.length ? 'parcial' : known.every((m) => m.capSource === 'conocida') ? 'conocida' : 'supuesta';
+    const dl = direct.get(sl.id);
+    sl.capSource = known.length === 0 ? 'desconocida' : known.length < members.length || dl ? 'parcial' : known.every((m) => m.capSource === 'conocida') ? 'conocida' : 'supuesta';
+    if (dl) {
+      sl.totalH += dl.totalH;
+      sl.estimatedH += dl.estimatedH;
+      sl.unscheduledH += dl.unscheduledH;
+      sl.unscheduledIds.push(...dl.unscheduledIds);
+      sl.noHoursIds.push(...dl.noHoursIds);
+      dl.scheduledIds.forEach((id) => sl.scheduledIds.add(id));
+    }
     for (const g of ['dia', 'semana', 'mes'] as Granularity[]) {
+      // la carga sin puesto suma horas a la sección, pero no capacidad (no se conoce)
+      for (const c of dl?.buckets[g].values() ?? []) {
+        const sc = cell(sl.buckets[g], c.key, c.start, sl.capSource);
+        sc.loadH += c.loadH;
+        sc.estimatedH += c.estimatedH;
+        for (const id of c.ids) sc.ids.push(id);
+      }
       for (const m of members) {
         for (const c of m.buckets[g].values()) {
           const sc = cell(sl.buckets[g], c.key, c.start, sl.capSource);

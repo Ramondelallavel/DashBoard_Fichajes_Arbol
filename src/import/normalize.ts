@@ -139,7 +139,7 @@ function statusOf(issues: Issue[]): AnyRecord['status'] {
 export function recordKey(kind: SourceKind, r: AnyRecord): string {
   if (kind === 'produccion') {
     const p = r as ProdRecord;
-    return `${p.ordenId ?? ''}|${p.operacionId ?? ''}`;
+    return `${p.ordenId ?? p.preordenId ?? ''}|${p.operacionId ?? ''}`;
   }
   const o = r as OrtemsRecord;
   return `${o.ordenId ?? ''}|${o.operacionId ?? ''}|${o.preordenId ?? ''}`;
@@ -241,7 +241,34 @@ export function normalizeImport(input: NormalizeInput): NormalizeResult {
     }
   }
 
-  // 3) Duplicados (exactos y de clave)
+  // 3) Duplicados (exactos y de clave). En modo «consolidar», las filas repetidas son avances del
+  //    mismo registro (p. ej. fichajes parciales): no son errores y el modelo las agrega.
+  if (options.repeatedKeys === 'consolidar') {
+    const groups = new Map<string, AnyRecord[]>();
+    for (const rec of records) {
+      if (statusOf(rec.issues) === 'rechazado') continue;
+      const k = recordKey(kind, rec);
+      const l = groups.get(k) ?? [];
+      l.push(rec);
+      groups.set(k, l);
+    }
+    for (const [key, list] of groups) {
+      if (list.length < 2) continue;
+      for (const rec of list) {
+        rec.issues.push({
+          code: 'FILAS_CONSOLIDADAS',
+          severity: 'info',
+          message: `${list.length} filas para ${key.split('|').filter(Boolean).join(' / ')}: se consolidan como avances del mismo registro.`,
+        });
+      }
+    }
+    for (const rec of records) {
+      rec.status = statusOf(rec.issues);
+      counts[rec.status]++;
+    }
+    const masters: MasterRow[] = lookups.flatMap((lk) => [...lk.map.entries()].map(([key, v]) => ({ role: lk.role, key, values: v.values, src: v.src })));
+    return { records, rawSheets, counts, issueStats: buildStats(records), unknownColumns, columnNotes, masters };
+  }
   const byKey = new Map<string, AnyRecord[]>();
   const bySig = new Map<string, AnyRecord>();
   for (const rec of records) {
@@ -286,7 +313,8 @@ export function normalizeImport(input: NormalizeInput): NormalizeResult {
 function validateRecord(kind: SourceKind, rec: AnyRecord, mapped: Set<string>, issues: Issue[]) {
   if (kind === 'produccion') {
     const p = rec as ProdRecord;
-    if (!p.ordenId) issues.push({ code: 'FALTA_ORDEN', severity: 'error', field: 'ordenId', message: 'Fila sin número de orden: no se puede relacionar.' });
+    if (!p.ordenId && !p.preordenId) issues.push({ code: 'FALTA_ORDEN', severity: 'error', field: 'ordenId', message: 'Fila sin número de orden ni de preorden: no se puede relacionar.' });
+    if (p.avance !== undefined && (p.avance < 0 || p.avance > 100)) issues.push({ code: 'NUMERO_INVALIDO', severity: 'aviso', field: 'avance', message: `Porcentaje de avance fuera de 0-100: ${p.avance}.` });
     if (mapped.has('operacionId') && !p.operacionId) issues.push({ code: 'FALTA_OPERACION_ID', severity: 'aviso', field: 'operacionId', message: 'Fila sin identificador de operación.' });
     if (mapped.has('puestoId') && !p.puestoId) issues.push({ code: 'FALTA_PUESTO', severity: 'aviso', field: 'puestoId', message: 'Operación sin puesto de trabajo asignado.' });
     if (mapped.has('aparatoId') && !p.aparatoId) issues.push({ code: 'FALTA_APARATO', severity: 'aviso', field: 'aparatoId', message: 'Fila sin número de aparato.' });

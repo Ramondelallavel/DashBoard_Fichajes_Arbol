@@ -172,7 +172,7 @@ export function Gantt({ analysis, rows, range, scaleId, zoom, source, labelWidth
                   const x = labelWidth + scale.x(b.start);
                   const w = Math.max(3, scale.x(b.end) - scale.x(b.start));
                   if (x + w < xMin || x > xMax) return null;
-                  const cls = ['gbar', b.source === 'produccion' ? 'prod' : 'ortems', b.summary ? 'summary' : '', ...b.flags.map((f) => `f-${f}`)].join(' ');
+                  const cls = ['gbar', b.source === 'produccion' ? 'prod' : 'ortems', b.real ? 'real' : '', b.summary ? 'summary' : '', ...b.flags.map((f) => `f-${f}`)].join(' ');
                   return (
                     <button
                       key={b.id}
@@ -187,7 +187,7 @@ export function Gantt({ analysis, rows, range, scaleId, zoom, source, labelWidth
                       }}
                       onBlur={() => setTip(null)}
                       onClick={() => onSelect(b, r)}
-                      aria-label={`${b.source === 'produccion' ? 'Producción' : 'Ortems'}: ${r.label}, ${fmtDateTime(b.start)} a ${fmtDateTime(b.end)}${b.flags.length ? `. ${b.flags.map((f) => FLAG_META[f].label).join(', ')}` : ''}`}
+                      aria-label={`${b.source === 'produccion' ? (b.real ? 'Ejecución real' : 'Producción') : 'Ortems'}: ${r.label}, ${fmtDateTime(b.start)} a ${fmtDateTime(b.end)}${b.flags.length ? `. ${b.flags.map((f) => FLAG_META[f].label).join(', ')}` : ''}`}
                     >
                       {!b.summary && w > 60 && b.source === 'produccion' && source !== 'ambas' && <span className="gtxt">{r.kind === 'op' ? r.label.split(' · ')[0] : ''}</span>}
                     </button>
@@ -223,6 +223,9 @@ export function GanttLegend({ extra }: { extra?: ReactNode }) {
     <div className="gantt-legend" aria-label="Leyenda del Gantt">
       <span className="it">
         <span className="key gbar prod" style={{ position: 'relative' }} /> Planificación de producción
+      </span>
+      <span className="it">
+        <span className="key gbar prod real" style={{ position: 'relative' }} /> Ejecución real (fichajes)
       </span>
       <span className="it">
         <span className="key gbar ortems" style={{ position: 'relative' }} /> Planificación Ortems

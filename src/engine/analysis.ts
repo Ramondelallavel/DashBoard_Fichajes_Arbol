@@ -8,7 +8,9 @@ import { CapacityCalendar } from './calendar';
 import { compareSources, worstCrit, type ComparisonResult, type ComparisonRow } from './comparison';
 import { computeLoad, type LoadItem, type LoadResult } from './load';
 import { matchSources, type MatchResult } from './matching';
-import { buildProductionModel, type Operacion, type ProductionModel } from './model';
+import { buildProductionModel, opSpan, type Operacion, type ProductionModel } from './model';
+import { demonstratedCapacity } from './demonstrated';
+import { idKey } from '../lib/text';
 import { detectOverlaps, worstOverlapById, type OverlapGroup } from './overlaps';
 
 export interface OpFlags {
@@ -60,10 +62,35 @@ export interface Analysis {
   overlapByOp: Map<string, OverlapGroup>;
   overlapByOrtems: Map<string, OverlapGroup>;
   opFlags: Map<string, OpFlags>;
+  /** Cuellos de botella sobre la planificación base (ver loadBase). */
   bottlenecks: BottleneckResult;
   bottlenecksCombined: BottleneckResult;
+  bottlenecksBy: Record<'produccion' | 'ortems' | 'combinada', BottleneckResult>;
+  /** Planificación usada para el análisis futuro (resuelta si la configuración es «auto»). */
+  loadBase: 'produccion' | 'ortems' | 'combinada';
+  loadBaseReason: string;
+  /** Carga ejecutada según fechas reales (fichajes) y capacidad demostrada por sección. */
+  loadReal: LoadResult;
+  /** Elementos de carga calculados (para recalcular la carga con los filtros activos). */
+  loadItems: { produccion: LoadItem[]; ortems: LoadItem[] };
+  puestoSeccion: Map<string, string | undefined>;
+  demonstrated: ReturnType<typeof demonstratedCapacity>;
+  /** Aparato de producción al que corresponde cada registro de Ortems (si se ha podido resolver). */
+  ortemsAparato: Map<string, string>;
+  aparatoCheck: { comparados: number; coincidentes: number; regla: Settings['matching']['aparatoKey'] };
   alerts: Alert[];
   timings: Record<string, number>;
+}
+
+/** Clave de comparación de un número de aparato entre fuentes (el original no se modifica). */
+export function aparatoMatchKey(id: string | undefined, mode: Settings['matching']['aparatoKey']): string | undefined {
+  if (!id) return undefined;
+  const t = id.trim().toUpperCase();
+  if (!t) return undefined;
+  if (mode === 'exacto') return t;
+  if (mode === 'sin_ceros') return t.replace(/^0+(?=.)/, '');
+  const digits = t.replace(/\D/g, '').replace(/^0+(?=.)/, '');
+  return digits || t;
 }
 
 export function runAnalysis(input: AnalysisInput): Analysis {
@@ -74,16 +101,46 @@ export function runAnalysis(input: AnalysisInput): Analysis {
   const refMs = referenceMs(settings, input.now);
   const calendar = new CapacityCalendar(settings);
 
-  let t = performance.now();
-  const model = buildProductionModel(input.prod, settings, input.manual);
-  lap('modelo', t);
-
   const ortemsList = ((input.ortems?.records ?? []) as OrtemsRecord[]).filter((r) => r.status !== 'rechazado');
   const ortems = new Map(ortemsList.map((r) => [r.rid, r]));
+  // Identificadores planificados en Ortems: permiten reconocer relaciones del árbol cuyo padre aún no está en producción
+  const norm = (x?: string) => (x === undefined ? undefined : idKey(x, { caseInsensitive: settings.matching.caseInsensitive, stripLeadingZeros: settings.matching.stripLeadingZeros }));
+  const ortemsIds = new Set<string>();
+  for (const r of ortemsList) {
+    const a = norm(r.preordenId);
+    const b = norm(r.ordenId);
+    if (a) ortemsIds.add(a);
+    if (b) ortemsIds.add(b);
+  }
+
+  let t = performance.now();
+  const model = buildProductionModel(input.prod, settings, input.manual, { has: (id) => ortemsIds.has(norm(id) ?? ''), source: 'Ortems' });
+  lap('modelo', t);
 
   t = performance.now();
   const match = matchSources(model, ortemsList, settings);
   lap('emparejamiento', t);
+
+  // Aparato de cada registro de Ortems: primero por la correspondencia (orden/preorden emparejada), después por la clave
+  const apByKey = new Map<string, string | null>();
+  for (const id of model.aparatos.keys()) {
+    const k = aparatoMatchKey(id, settings.matching.aparatoKey);
+    if (!k) continue;
+    apByKey.set(k, apByKey.has(k) && apByKey.get(k) !== id ? null : id);
+  }
+  const ortemsAparato = new Map<string, string>();
+  const aparatoCheck = { comparados: 0, coincidentes: 0, regla: settings.matching.aparatoKey };
+  for (const r of ortemsList) {
+    const m = match.matches.get(r.rid);
+    const prodAp = m ? (m.level === 'operacion' ? model.ops.get(m.target)?.aparatoId : model.ordenes.get(m.target)?.aparatoId) : undefined;
+    const byKey = apByKey.get(aparatoMatchKey(r.aparatoId, settings.matching.aparatoKey) ?? '') ?? undefined;
+    if (prodAp && r.aparatoId) {
+      aparatoCheck.comparados++;
+      if (byKey === prodAp) aparatoCheck.coincidentes++;
+    }
+    const resolved = prodAp ?? byKey;
+    if (resolved) ortemsAparato.set(r.rid, resolved);
+  }
 
   // Elementos de carga
   t = performance.now();
@@ -92,24 +149,28 @@ export function runAnalysis(input: AnalysisInput): Analysis {
   for (const op of model.ops.values()) {
     const flags: OpFlags = { sinInfo: [] };
     opFlags.set(op.key, flags);
+    const span = opSpan(op);
     let hours = op.durationH;
     let estimated = false;
-    if (hours === undefined && settings.load.estimateDurationFromDates && op.start !== undefined && op.end !== undefined) {
-      hours = calendar.estimateHoursFromDates(op.puestoId, op.start, op.end);
+    if (hours === undefined && settings.load.estimateDurationFromDates && span) {
+      hours = calendar.estimateHoursFromDates(op.puestoId, span.start, span.end);
       estimated = true;
       flags.durEstimada = true;
     }
     flags.hours = hours;
-    if (!op.puestoId) flags.sinInfo.push('sin puesto');
-    if (op.start === undefined || op.end === undefined) flags.sinInfo.push('sin fechas');
-    if (op.durationH === undefined) flags.sinInfo.push(estimated ? 'duración estimada' : 'sin duración');
-    prodItems.push({ id: op.key, puestoId: op.puestoId, seccion: op.seccion, ordenId: op.ordenId, start: op.start, end: op.end, hours, estimated, source: 'produccion' });
+    if (!op.puestoId && model.has.puestos) flags.sinInfo.push('sin puesto');
+    if (!span) flags.sinInfo.push('sin fechas');
+    if (op.durationH === undefined && model.has.duracion) flags.sinInfo.push(estimated ? 'duración estimada' : 'sin duración');
+    if (op.estado === 'anulada') continue; // las anuladas no cargan a ningún recurso
+    prodItems.push({ id: op.key, puestoId: op.puestoId, seccion: op.seccion, ordenId: op.ordenId, start: span?.start, end: span?.end, hours, estimated, real: span?.real, source: 'produccion' });
   }
   const ortItems: LoadItem[] = [];
   for (const r of ortemsList) {
-    if (!r.puestoId && !(match.matches.get(r.rid)?.level === 'operacion')) continue;
+    if (!r.puestoId && !r.seccion && !(match.matches.get(r.rid)?.level === 'operacion')) continue;
     const m = match.matches.get(r.rid);
     const op = m?.level === 'operacion' ? model.ops.get(m.target) : undefined;
+    // Una preorden ya terminada según producción no debería cargar el plan de Ortems: se avisa (comparador)
+    // pero se mantiene en la carga de Ortems tal como Ortems la planifica.
     const puestoId = r.puestoId ?? op?.puestoId;
     let hours = r.duracionH ?? op?.durationH;
     let estimated = r.duracionH === undefined && op?.durationH === undefined;
@@ -117,17 +178,40 @@ export function runAnalysis(input: AnalysisInput): Analysis {
       hours = calendar.estimateHoursFromDates(puestoId, r.inicio, r.fin);
       estimated = true;
     }
-    ortItems.push({ id: r.rid, puestoId, ordenId: r.ordenId, start: r.inicio, end: r.fin, hours, estimated, source: 'ortems' });
+    ortItems.push({ id: r.rid, puestoId, seccion: r.seccion ?? (puestoId ? model.puestos.get(puestoId)?.seccion : undefined), ordenId: r.ordenId, start: r.inicio, end: r.fin, hours, estimated, source: 'ortems' });
   }
   const onlyOrtems = new Set(match.ortemsOnly);
-  const combinedItems = [...prodItems, ...ortItems.filter((i) => onlyOrtems.has(i.id))];
-  const puestoSeccion = new Map([...model.puestos.values()].map((p) => [p.id, p.seccion]));
+  // En la carga combinada no se suma la ejecución real pasada: producción planificada + lo que solo está en Ortems
+  const combinedItems = [...prodItems.filter((i) => !i.real), ...ortItems.filter((i) => onlyOrtems.has(i.id))];
+  const puestoSeccion = new Map<string, string | undefined>([...model.puestos.values()].map((p) => [p.id, p.seccion]));
+  for (const r of ortemsList) if (r.puestoId && r.seccion && !puestoSeccion.get(r.puestoId)) puestoSeccion.set(r.puestoId, r.seccion);
   const load = {
     produccion: computeLoad(prodItems, calendar, 'produccion', puestoSeccion),
     ortems: computeLoad(ortItems, calendar, 'ortems', puestoSeccion),
     combinada: computeLoad(combinedItems, calendar, 'combinada', puestoSeccion),
   };
+  const loadReal = computeLoad(prodItems.filter((i) => i.real), calendar, 'produccion', puestoSeccion);
   lap('carga', t);
+
+  // Base del análisis futuro
+  const futurePlanned = prodItems.some((i) => !i.real && i.end !== undefined && i.end >= refMs);
+  let loadBase: Analysis['loadBase'];
+  let loadBaseReason: string;
+  if (settings.load.base !== 'auto') {
+    loadBase = settings.load.base;
+    loadBaseReason = 'Elegida en Configuración.';
+  } else if (futurePlanned) {
+    loadBase = 'produccion';
+    loadBaseReason = 'Automática: el Excel de producción tiene fechas previstas futuras.';
+  } else if (ortemsList.length) {
+    loadBase = 'ortems';
+    loadBaseReason = model.has.reales
+      ? 'Automática: el Excel de producción solo contiene ejecución real (fichajes); el plan futuro es el de Ortems.'
+      : 'Automática: el Excel de producción no tiene fechas previstas futuras; se usa el plan de Ortems.';
+  } else {
+    loadBase = 'produccion';
+    loadBaseReason = 'Automática: no hay datos de Ortems.';
+  }
 
   t = performance.now();
   const prodOverlaps = detectOverlaps(
@@ -145,13 +229,27 @@ export function runAnalysis(input: AnalysisInput): Analysis {
   lap('solapes', t);
 
   t = performance.now();
-  const comparison = compareSources({ model, ortems, match, calendar, settings, ortemsPrev: input.ortemsPrev, ortemsOverlaps: ortOverlaps });
+  const comparison = compareSources({ model, ortems, match, calendar, settings, ortemsPrev: input.ortemsPrev, ortemsOverlaps: ortOverlaps, refMs, ortemsAparato });
   addCombinedSaturation(comparison, load, refMs);
   lap('comparacion', t);
 
   t = performance.now();
-  const bottlenecks = computeBottlenecks(load.produccion, prodOverlaps, settings, refMs, model);
-  const bottlenecksCombined = computeBottlenecks(load.combinada, prodOverlaps, settings, refMs, model);
+  const apOrt = new Map<string, Set<string>>();
+  for (const r of ortemsList) {
+    const ap = ortemsAparato.get(r.rid) ?? r.aparatoId;
+    if (!r.puestoId || !ap) continue;
+    const st = apOrt.get(r.puestoId) ?? new Set<string>();
+    st.add(ap);
+    apOrt.set(r.puestoId, st);
+  }
+  const bottlenecksBy = {
+    produccion: computeBottlenecks(load.produccion, prodOverlaps, settings, refMs, model),
+    ortems: computeBottlenecks(load.ortems, ortOverlaps, settings, refMs, model, apOrt),
+    combinada: computeBottlenecks(load.combinada, prodOverlaps, settings, refMs, model),
+  };
+  const bottlenecks = bottlenecksBy[loadBase];
+  const bottlenecksCombined = bottlenecksBy.combinada;
+  const demonstrated = demonstratedCapacity(loadReal, load[loadBase === 'produccion' && !futurePlanned ? 'ortems' : loadBase], refMs, settings.load.demonstratedWeeks, settings.horizonWeeks, loadBase === 'produccion' && futurePlanned ? 'la planificación de producción' : 'Ortems');
   lap('cuellos', t);
 
   // Indicadores por operación
@@ -176,6 +274,15 @@ export function runAnalysis(input: AnalysisInput): Analysis {
     opFlags,
     bottlenecks,
     bottlenecksCombined,
+    bottlenecksBy,
+    loadBase,
+    loadBaseReason,
+    loadReal,
+    loadItems: { produccion: prodItems, ortems: ortItems },
+    puestoSeccion,
+    demonstrated,
+    ortemsAparato,
+    aparatoCheck,
   };
   const alerts = buildAlerts(partial);
   lap('alertas', t);
